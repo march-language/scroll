@@ -409,8 +409,6 @@ fn generate_runner(cells, run_through_idx) do
         Cons(ServerCell(_), rest) -> go(rest, mod_rev, body_rev, names_rev, code_n, total_n + 1)
         Cons(Section(_), rest)    -> go(rest, mod_rev, body_rev, names_rev, code_n, total_n + 1)
         Cons(Code(src), rest) ->
-          let new_names = collect_bound_names(src)
-          let names_rev = List.append(new_names, names_rev)
           if is_mod_cell(src) do
             let (mod_code, main_code) = make_mod_cell(src, code_n)
             go(rest,
@@ -420,6 +418,8 @@ fn generate_runner(cells, run_through_idx) do
               code_n + 1,
               total_n + 1)
           else
+            let new_names = collect_bound_names(src)
+            let names_rev = List.append(new_names, names_rev)
             go(rest,
               mod_rev,
               Cons(make_cell_inline(src, code_n), body_rev),
