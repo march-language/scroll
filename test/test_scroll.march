@@ -1,0 +1,317 @@
+-- test/test_scroll.march
+-- Tests for the Scroll notebook engine.
+--
+-- Covers:
+--   parse_cells         — unit tests for .scrollmd markdown parsing
+--   generate_runner     — unit tests for March source code generation
+--   extract_cell_output — unit tests for sentinel-based output extraction
+--   Integration         — run generated runners via System.cmd and check stdout
+--
+-- Run with:
+--   MARCH_LIB_PATH=/Users/80197052/code/scroll/src \
+--     march test test/test_scroll.march
+
+mod TestScroll do
+
+-- ── Helpers ───────────────────────────────────────────────────────────────────
+
+-- Write string to a temp file, return path.
+pfn write_tmp(content, suffix) do
+  let path = "/tmp/test_scroll_" ++ String.from_int(System.pid()) ++ suffix
+  match File.write(path, content) do
+    Ok(_) -> path
+    Err(e) -> panic("write_tmp failed: " ++ e)
+  end
+end
+
+-- Run march on a source string; return (exit_code, stdout, stderr).
+pfn run_march(march_src) do
+  let tmp = write_tmp(march_src, ".march")
+  match System.cmd("march", [tmp]) do
+    Ok(r) -> (System.exit_code(r), System.stdout(r), System.stderr(r))
+    Err(e) -> (-1, "", e)
+  end
+end
+
+-- Parse notebook content, generate runner through nb_idx, execute,
+-- and return (exit_code, raw_stdout).
+pfn run_nb(nb_content, nb_idx) do
+  let cells = ForgeNotebookServer.parse_cells(nb_content)
+  let runner = ForgeNotebookServer.generate_runner(cells, nb_idx)
+  let (rc, stdout, _) = run_march(runner)
+  (rc, stdout)
+end
+
+-- ── parse_cells ───────────────────────────────────────────────────────────────
+
+describe "parse_cells" do
+
+  test "empty string yields no cells" do
+    let cells = ForgeNotebookServer.parse_cells("")
+    assert (List.length(cells) == 0)
+  end
+
+  test "plain text yields one Markdown cell" do
+    let cells = ForgeNotebookServer.parse_cells("Hello, world!")
+    assert (List.length(cells) == 1)
+    match cells do
+      Cons(cell, Nil) -> assert (ForgeNotebookServer.cell_tag(cell) == "Markdown")
+      _ -> assert false
+    end
+  end
+
+  test "a code fence yields one Code cell" do
+    let src = "```march\nprintln(\"hi\")\n```"
+    let cells = ForgeNotebookServer.parse_cells(src)
+    assert (List.length(cells) == 1)
+    match cells do
+      Cons(cell, Nil) -> assert (ForgeNotebookServer.cell_tag(cell) == "Code")
+      _ -> assert false
+    end
+  end
+
+  test "code cell contains correct source" do
+    let src = "```march\n1 + 1\n```"
+    let cells = ForgeNotebookServer.parse_cells(src)
+    match cells do
+      Cons(cell, Nil) ->
+        assert (String.trim(ForgeNotebookServer.cell_source(cell)) == "1 + 1")
+      _ -> assert false
+    end
+  end
+
+  test "server fence yields ServerCell" do
+    let src = "```march:server\nHttpServer.start(3000)\n```"
+    let cells = ForgeNotebookServer.parse_cells(src)
+    assert (List.length(cells) == 1)
+    match cells do
+      Cons(cell, Nil) -> assert (ForgeNotebookServer.cell_tag(cell) == "ServerCell")
+      _ -> assert false
+    end
+  end
+
+  test "markdown before code fence is kept" do
+    let src = "# Title\n\n```march\n42\n```"
+    let cells = ForgeNotebookServer.parse_cells(src)
+    assert (List.length(cells) == 2)
+    let tags = List.map(cells, fn c -> ForgeNotebookServer.cell_tag(c))
+    assert (tags == ["Markdown", "Code"])
+  end
+
+  test "multiple code cells parsed in order" do
+    let src = "```march\n1\n```\n\n```march\n2\n```\n\n```march\n3\n```"
+    let cells = ForgeNotebookServer.parse_cells(src)
+    assert (List.length(cells) == 3)
+    let all_code = List.all(cells, fn c -> ForgeNotebookServer.cell_tag(c) == "Code")
+    assert all_code
+  end
+
+  test "whitespace-only text between fences is not a cell" do
+    let src = "```march\n1\n```\n\n\n```march\n2\n```"
+    let cells = ForgeNotebookServer.parse_cells(src)
+    assert (List.length(cells) == 2)
+  end
+
+  test "mixed notebook: markdown, code, markdown, code" do
+    let src = "# Intro\n\n```march\n1\n```\n\nSome text.\n\n```march\n2\n```"
+    let cells = ForgeNotebookServer.parse_cells(src)
+    assert (List.length(cells) == 4)
+    let tags = List.map(cells, fn c -> ForgeNotebookServer.cell_tag(c))
+    assert (tags == ["Markdown", "Code", "Markdown", "Code"])
+  end
+
+  test "server cell source is preserved" do
+    let src = "```march:server\nfoo()\nbar()\n```"
+    let cells = ForgeNotebookServer.parse_cells(src)
+    match cells do
+      Cons(cell, Nil) ->
+        let s = ForgeNotebookServer.cell_source(cell)
+        assert (String.contains(s, "foo()"))
+        assert (String.contains(s, "bar()"))
+      _ -> assert false
+    end
+  end
+
+end
+
+-- ── extract_cell_output ───────────────────────────────────────────────────────
+
+describe "extract_cell_output" do
+
+  test "extracts content between sentinel markers" do
+    let stdout = "__MNB_START_0__\nhello\n__MNB_END_0__\n"
+    let out = ForgeNotebookServer.extract_cell_output(stdout, 0)
+    assert (out == "hello")
+  end
+
+  test "returns empty string when start marker missing" do
+    let stdout = "no markers here"
+    let out = ForgeNotebookServer.extract_cell_output(stdout, 0)
+    assert (out == "")
+  end
+
+  test "handles multi-line output" do
+    let stdout = "__MNB_START_1__\nline1\nline2\nline3\n__MNB_END_1__\n"
+    let out = ForgeNotebookServer.extract_cell_output(stdout, 1)
+    assert (out == "line1\nline2\nline3")
+  end
+
+  test "extracts correct cell when multiple present" do
+    let stdout =
+      "__MNB_START_0__\ncell0\n__MNB_END_0__\n" ++
+      "__MNB_START_1__\ncell1\n__MNB_END_1__\n"
+    let out0 = ForgeNotebookServer.extract_cell_output(stdout, 0)
+    let out1 = ForgeNotebookServer.extract_cell_output(stdout, 1)
+    assert (out0 == "cell0")
+    assert (out1 == "cell1")
+  end
+
+  test "empty cell body yields empty string" do
+    let stdout = "__MNB_START_0__\n__MNB_END_0__\n"
+    let out = ForgeNotebookServer.extract_cell_output(stdout, 0)
+    assert (out == "")
+  end
+
+  test "works for higher cell indices" do
+    let stdout = "__MNB_START_42__\nvalue42\n__MNB_END_42__\n"
+    let out = ForgeNotebookServer.extract_cell_output(stdout, 42)
+    assert (out == "value42")
+  end
+
+  test "ignores content after end marker" do
+    let stdout = "__MNB_START_0__\nresult\n__MNB_END_0__\nextra stuff\n"
+    let out = ForgeNotebookServer.extract_cell_output(stdout, 0)
+    assert (out == "result")
+  end
+
+end
+
+-- ── generate_runner ───────────────────────────────────────────────────────────
+
+describe "generate_runner" do
+
+  test "wraps output in NotebookRunner mod" do
+    let cells = ForgeNotebookServer.parse_cells("```march\n1 + 1\n```")
+    let runner = ForgeNotebookServer.generate_runner(cells, 0)
+    assert (String.contains(runner, "mod NotebookRunner"))
+  end
+
+  test "includes start and end markers for cell 0" do
+    let cells = ForgeNotebookServer.parse_cells("```march\n1 + 1\n```")
+    let runner = ForgeNotebookServer.generate_runner(cells, 0)
+    assert (String.contains(runner, "__MNB_START_0__"))
+    assert (String.contains(runner, "__MNB_END_0__"))
+  end
+
+  test "skips Markdown cells in sentinel numbering" do
+    -- Markdown + one Code → only cell 0 sentinels in runner
+    let cells = ForgeNotebookServer.parse_cells("# Title\n\n```march\n42\n```")
+    let runner = ForgeNotebookServer.generate_runner(cells, 1)
+    assert (String.contains(runner, "__MNB_START_0__"))
+    assert not(String.contains(runner, "__MNB_START_1__"))
+  end
+
+  test "runs only up to run_through_idx" do
+    let nb = "```march\n1\n```\n\n```march\n2\n```\n\n```march\n3\n```"
+    let cells = ForgeNotebookServer.parse_cells(nb)
+    let runner = ForgeNotebookServer.generate_runner(cells, 1)
+    assert (String.contains(runner, "__MNB_START_0__"))
+    assert (String.contains(runner, "__MNB_START_1__"))
+    assert not(String.contains(runner, "__MNB_START_2__"))
+  end
+
+  test "let binding is suppressed (Jupyter convention)" do
+    let cells = ForgeNotebookServer.parse_cells("```march\nlet x = 42\n```")
+    let runner = ForgeNotebookServer.generate_runner(cells, 0)
+    -- The captured result variable must be "()" for let-bindings
+    assert (String.contains(runner, "let __r0__ = ()"))
+  end
+
+  test "expression result is captured" do
+    let cells = ForgeNotebookServer.parse_cells("```march\n1 + 1\n```")
+    let runner = ForgeNotebookServer.generate_runner(cells, 0)
+    assert (String.contains(runner, "let __r0__ = 1 + 1"))
+  end
+
+  test "output of generate_runner is valid march source" do
+    let cells = ForgeNotebookServer.parse_cells("```march\nprintln(\"ok\")\n```")
+    let runner = ForgeNotebookServer.generate_runner(cells, 0)
+    let (rc, _, _) = run_march(runner)
+    assert (rc == 0)
+  end
+
+end
+
+-- ── Integration: round-trip through parse → generate → execute ────────────────
+
+describe "integration" do
+
+  test "single expression cell prints result" do
+    let (rc, stdout) = run_nb("```march\n1 + 1\n```", 0)
+    assert (rc == 0)
+    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "2")
+  end
+
+  test "println output is captured" do
+    let (rc, stdout) = run_nb("```march\nprintln(\"hello scroll\")\n```", 0)
+    assert (rc == 0)
+    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "hello scroll")
+  end
+
+  test "let binding is silent (no auto-print)" do
+    let (rc, stdout) = run_nb("```march\nlet x = 99\n```", 0)
+    assert (rc == 0)
+    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "")
+  end
+
+  test "binding from earlier cell is visible in later cell" do
+    let nb = "```march\nlet x = 7\n```\n\n```march\nx * 6\n```"
+    let (rc, stdout) = run_nb(nb, 1)
+    assert (rc == 0)
+    assert (ForgeNotebookServer.extract_cell_output(stdout, 1) == "42")
+  end
+
+  test "string expression prints without extra quotes" do
+    let (rc, stdout) = run_nb("```march\n\"hello\"\n```", 0)
+    assert (rc == 0)
+    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "hello")
+  end
+
+  test "unit expression produces no output" do
+    let (rc, stdout) = run_nb("```march\n()\n```", 0)
+    assert (rc == 0)
+    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "")
+  end
+
+  test "markdown cells are ignored in runner" do
+    let nb = "# My Notebook\n\n```march\n21 * 2\n```"
+    -- cell index 1: the Code cell is the second overall cell
+    let (rc, stdout) = run_nb(nb, 1)
+    assert (rc == 0)
+    -- code_n is 0 (first Code cell)
+    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "42")
+  end
+
+  test "syntax error causes non-zero exit" do
+    let (rc, _stdout) = run_nb("```march\n@@@ not valid march @@@\n```", 0)
+    assert (rc != 0)
+  end
+
+  test "multiple cells accumulate output independently" do
+    let nb = "```march\nprintln(\"first\")\n```\n\n```march\nprintln(\"second\")\n```"
+    let (rc, stdout) = run_nb(nb, 1)
+    assert (rc == 0)
+    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "first")
+    assert (ForgeNotebookServer.extract_cell_output(stdout, 1) == "second")
+  end
+
+  test "arithmetic accumulated across three cells" do
+    let nb = "```march\nlet a = 10\n```\n\n```march\nlet b = 32\n```\n\n```march\na + b\n```"
+    let (rc, stdout) = run_nb(nb, 2)
+    assert (rc == 0)
+    assert (ForgeNotebookServer.extract_cell_output(stdout, 2) == "42")
+  end
+
+end
+
+end
