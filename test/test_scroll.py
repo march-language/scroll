@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-End-to-end test suite for forge notebook serve.
+End-to-end test suite for Scroll (forge notebook serve).
 
 Runs the notebook server, connects via WebSocket, and validates:
   - load / parse_cells
@@ -8,6 +8,7 @@ Runs the notebook server, connects via WebSocket, and validates:
   - multi-line expressions (DataFrame-style, if/match)
   - module cells (mod wrapper)
   - Phase 1: clear output via WS
+  - Phase 2: async execution + interrupt (stop_run)
   - error propagation
   - edge cases: empty cell, comment-only, println side effect
 """
