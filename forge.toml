@@ -6,3 +6,9 @@ description = "Interactive notebook for March — Livebook-style in the browser"
 author = ""
 
 [deps]
+
+[archive]
+
+[archive.task.scroll.serve]
+command = "scroll.serve"
+module  = "lib/scroll.march"

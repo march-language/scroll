@@ -206,8 +206,8 @@ Register in `forge/bin/main.ml` alongside the other subcommands.
 
 ### 4.2 Notebook-local project
 
-When `forge notebook serve mynotebook.mnb` starts, the OCaml shim
-(`cmd_notebook.ml`) looks for `mynotebook.toml` alongside the `.mnb` file. If
+When `forge notebook serve mynotebook.scrollmd` starts, the OCaml shim
+(`cmd_notebook.ml`) looks for `mynotebook.toml` alongside the `.scrollmd` file. If
 absent, it creates one:
 
 ```toml
@@ -294,7 +294,7 @@ a popover. Updated after every cell run. Toggled by a toolbar button.
 
 ### 6.1 New cell type: section
 
-Stored in `.mnb` as:
+Stored in `.scrollmd` as:
 ```
 <!-- section: Data Loading -->
 ```
@@ -355,7 +355,7 @@ Toolbar "Export HTML" button:
 
 **Server-side (CI / headless, future):**
 
-`forge notebook render mynotebook.mnb -o mynotebook.html` — the
+`forge notebook render mynotebook.scrollmd -o mynotebook.html` — the
 `run_render` path in `cmd_notebook.ml` is already sketched; it just needs the
 rendered HTML to include outputs (requires a run pass first).
 

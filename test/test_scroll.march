@@ -312,6 +312,32 @@ describe "integration" do
     assert (ForgeNotebookServer.extract_cell_output(stdout, 2) == "42")
   end
 
+  test "module defined in cell A is callable from cell B" do
+    let cell_a = "```march\nmod Greet do\n  fn hello(name) do\n    \"Hello, \" ++ name ++ \"!\"\n  end\nend\n```"
+    let cell_b = "```march\nGreet.hello(\"World\")\n```"
+    let nb = cell_a ++ "\n\n" ++ cell_b
+    let (rc, stdout) = run_nb(nb, 1)
+    assert (rc == 0)
+    assert (ForgeNotebookServer.extract_cell_output(stdout, 1) == "Hello, World!")
+  end
+
+  test "module cell produces no output itself" do
+    let cell_a = "```march\nmod Util do\n  fn double(x) do x * 2 end\nend\n```"
+    let nb = cell_a
+    let (rc, stdout) = run_nb(nb, 0)
+    assert (rc == 0)
+    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "")
+  end
+
+  test "multiple functions from module cell work in later cells" do
+    let cell_a = "```march\nmod MathUtil do\n  fn double(x) do x * 2 end\n  fn square(x) do x * x end\nend\n```"
+    let cell_b = "```march\nMathUtil.double(MathUtil.square(3))\n```"
+    let nb = cell_a ++ "\n\n" ++ cell_b
+    let (rc, stdout) = run_nb(nb, 1)
+    assert (rc == 0)
+    assert (ForgeNotebookServer.extract_cell_output(stdout, 1) == "18")
+  end
+
 end
 
 end

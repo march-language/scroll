@@ -450,6 +450,9 @@ fn generate_runner(cells, run_through_idx) do
   let body     = String.join(body_chunks, "")
   let body     = if String.is_empty(body) do "  ()\n" else body end
   let body     = body ++ vars_block(bound_names)
+  -- Module cells are nested inside NotebookRunner so qualified names like
+  -- Greet.hello resolve correctly from main(). Nested mod declarations are
+  -- valid March (mod_decl is part of decl_list_r used recursively).
   "mod NotebookRunner do\n\n" ++ mod_str ++ "fn main() do\n" ++ body ++ "end\n\nend\n"
 end
 
