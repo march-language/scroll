@@ -1458,13 +1458,20 @@ function moveCell(idx, dir) {
 let _draggingIdx = -1;
 
 function attachDragEvents(wrap, idx) {
-  wrap.draggable = true;
+  // Only enable draggable when the user presses the grab handle.
+  // This lets clicks on textareas, buttons, etc. work normally.
+  const handle = wrap.querySelector(".drag-handle");
+  if (handle) {
+    handle.addEventListener("mousedown", () => { wrap.draggable = true; });
+    handle.addEventListener("mouseup",   () => { wrap.draggable = false; });
+  }
   wrap.addEventListener("dragstart", (e) => {
     _draggingIdx = idx;
     e.dataTransfer.effectAllowed = "move";
     setTimeout(() => wrap.style.opacity = "0.5", 0);
   });
   wrap.addEventListener("dragend", () => {
+    wrap.draggable = false;
     wrap.style.opacity = "";
     document.querySelectorAll(".drag-over-top,.drag-over-bottom").forEach(el => {
       el.classList.remove("drag-over-top","drag-over-bottom");
