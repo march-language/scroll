@@ -72,8 +72,19 @@ Server cells run as background processes with Start/Stop controls in the UI.
 
 ```bash
 cd /path/to/scroll
-forge test
+
+# Unit tests (117 tests)
+MARCH_LIB_PATH=lib march test test/test_scroll.march
+
+# End-to-end tests via WebSocket (32 tests)
+python3 test/test_scroll.py
 ```
+
+> **Note:** `forge test` currently fails to link the compiled test binary due to
+> three upstream march toolchain bugs (nested-namespace name mangling in the
+> linker, a module init-order bug in the interpreter, and a hang in compiled
+> test binaries on arm64 macOS). Use `march test` in interpreter mode instead —
+> it runs the same 117 unit tests without those issues.
 
 ## Development
 
