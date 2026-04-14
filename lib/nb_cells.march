@@ -1,0 +1,158 @@
+-- nb_cells.march — Cell types, parsing, introspection, and string helpers.
+--
+-- Defines the Cell ADT used throughout the notebook engine and provides:
+--   - parse_cells/1   : parse .scrollmd source into a List(Cell)
+--   - cell_tag/1      : return the cell kind as a string
+--   - cell_source/1   : extract the raw source string from any cell
+--   - nth_cell/2      : look up a cell by index
+--   - html_escape/1   : escape HTML special characters
+--   - json_escape/1   : escape a string for embedding in JSON
+--   - json_str/1      : wrap an escaped string in JSON double-quotes
+
+mod NbCells do
+
+-- ── String helpers ────────────────────────────────────────────────────────────
+
+pfn bs(s) do String.byte_size(s) end
+pfn sw(s, p) do String.starts_with(s, p) end
+pfn trim(s) do String.trim(s) end
+
+fn html_escape(s) do
+  let s = String.replace_all(s, "&", "&amp;")
+  let s = String.replace_all(s, "<", "&lt;")
+  let s = String.replace_all(s, ">", "&gt;")
+  let s = String.replace_all(s, "\"", "&quot;")
+  s
+end
+
+fn json_escape(s) do
+  let s = String.replace_all(s, "\\", "\\\\")
+  let s = String.replace_all(s, "\"", "\\\"")
+  let s = String.replace_all(s, "\n", "\\n")
+  let s = String.replace_all(s, "\r", "\\r")
+  let s = String.replace_all(s, "\t", "\\t")
+  s
+end
+
+fn json_str(s) do "\"" ++ json_escape(s) ++ "\"" end
+
+-- ── Cell types ────────────────────────────────────────────────────────────────
+
+-- Code   = regular code cell (run in sequence, produces output)
+-- Server = long-running background process cell (HttpServer, etc.)
+type Cell = Markdown(String) | Code(String) | ServerCell(String) | Section(String)
+
+-- parse_cells: parse the .scrollmd markdown format into a list of cells.
+-- Supports three fence kinds:
+--   ```march        → Code cell
+--   ```march:server → Server cell
+--   (plain text)    → Markdown cell
+fn parse_cells(content) do
+  let lines = String.split(content, "\n")
+  -- mode: "none" | "code" | "server"
+  fn go(lines, cells, buf, mode) do
+    match lines do
+      Nil ->
+        let text = String.join(List.reverse(buf), "\n")
+        if mode == "code" do
+          List.reverse(Cons(Code(text), cells))
+        else
+          if mode == "server" do
+            List.reverse(Cons(ServerCell(text), cells))
+          else
+            let trimmed = trim(text)
+            if String.is_empty(trimmed) do
+              List.reverse(cells)
+            else
+              List.reverse(Cons(Markdown(trimmed), cells))
+            end
+          end
+        end
+      Cons(line, rest) ->
+        let stripped = trim(line)
+        if mode == "code" do
+          if stripped == "```" do
+            let code = String.join(List.reverse(buf), "\n")
+            go(rest, Cons(Code(code), cells), Nil, "none")
+          else
+            go(rest, cells, Cons(line, buf), "code")
+          end
+        else
+          if mode == "server" do
+            if stripped == "```" do
+              let code = String.join(List.reverse(buf), "\n")
+              go(rest, Cons(ServerCell(code), cells), Nil, "none")
+            else
+              go(rest, cells, Cons(line, buf), "server")
+            end
+          else
+            if stripped == "```march" do
+              let text = trim(String.join(List.reverse(buf), "\n"))
+              let new_cells =
+                if String.is_empty(text) do cells
+                else Cons(Markdown(text), cells)
+                end
+              go(rest, new_cells, Nil, "code")
+            else
+              if stripped == "```march:server" do
+                let text = trim(String.join(List.reverse(buf), "\n"))
+                let new_cells =
+                  if String.is_empty(text) do cells
+                  else Cons(Markdown(text), cells)
+                  end
+                go(rest, new_cells, Nil, "server")
+              else
+                if String.starts_with(stripped, "<!-- section:") && String.ends_with(stripped, "-->") do
+                  let text = trim(String.join(List.reverse(buf), "\n"))
+                  let cells_with_md =
+                    if String.is_empty(text) do cells
+                    else Cons(Markdown(text), cells)
+                    end
+                  let inner = String.slice(stripped, 13, bs(stripped) - 3)
+                  let title = trim(inner)
+                  go(rest, Cons(Section(title), cells_with_md), Nil, "none")
+                else
+                  go(rest, cells, Cons(line, buf), "none")
+                end
+              end
+            end
+          end
+        end
+    end
+  end
+  go(lines, Nil, Nil, "none")
+end
+
+-- ── Cell introspection (public, used by tests) ───────────────────────────────
+
+fn cell_tag(cell) do
+  match cell do
+    Markdown(_)   -> "Markdown"
+    Code(_)       -> "Code"
+    ServerCell(_) -> "ServerCell"
+    Section(_)    -> "Section"
+  end
+end
+
+fn cell_source(cell) do
+  match cell do
+    Markdown(s)   -> s
+    Code(s)       -> s
+    ServerCell(s) -> s
+    Section(s)    -> s
+  end
+end
+
+-- ── Cell lookup ───────────────────────────────────────────────────────────────
+
+fn nth_cell(cells, idx) do
+  match cells do
+    Nil -> None
+    Cons(cell, rest) ->
+      if idx == 0 do Some(cell)
+      else nth_cell(rest, idx - 1)
+      end
+  end
+end
+
+end

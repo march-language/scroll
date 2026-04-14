@@ -1,0 +1,452 @@
+-- nb_runner.march — March code generation and cell-output extraction.
+--
+-- Provides:
+--   generate_runner/2       : emit a self-contained NotebookRunner March program
+--   generate_server_runner/1: emit a standalone ServerCell runner
+--   extract_cell_output/2   : pull one cell's output from sentinel-marked stdout
+--   extract_vars/1          : parse the __MNB_VARS__ block from stdout
+--   extract_forge_adds/1    : find __FORGE_ADD__ sentinel lines in stdout
+--   strip_forge_adds/1      : remove those sentinel lines from output
+--   process_forge_adds/2    : run `forge add` for each sentinel and return results
+--   find_code_idx/4         : map overall cell index → code-cell index
+
+mod NbRunner do
+
+import NbCells
+
+-- ── Local string helpers ──────────────────────────────────────────────────────
+
+pfn bs(s) do String.byte_size(s) end
+pfn sw(s, p) do String.starts_with(s, p) end
+pfn trim(s) do String.trim(s) end
+
+-- ── Sentinel markers ─────────────────────────────────────────────────────────
+
+pfn cell_start_marker(n) do "__MNB_START_" ++ String.from_int(n) ++ "__" end
+pfn cell_end_marker(n)   do "__MNB_END_"   ++ String.from_int(n) ++ "__" end
+
+-- ── Runner generation ─────────────────────────────────────────────────────────
+
+-- Generate a runner for cells 0..run_through_idx (Code cells only; Server cells skipped).
+--
+-- Each Code cell becomes a module-level helper function so that:
+--   1. Named function declarations inside cells work normally (lexically scoped).
+--   2. The cell's return value can be captured and auto-printed.
+--
+-- Auto-print rule: if the cell's last expression evaluates to a non-unit value
+-- (i.e. to_string result != "()"), it is printed automatically — just like a REPL.
+--
+-- Cells are inlined sequentially into main() so that `let` bindings defined
+-- in earlier cells are visible in later ones — exactly like a REPL session.
+--
+-- Each cell's source is split into "preamble" (let-binding lines) and a
+-- "final expression" (the last non-let line).  The preamble lines become
+-- top-level lets in main(); the final expression is captured for auto-print.
+-- If all lines are let-bindings (no final expression), we emit "()" as the
+-- captured value so the auto-print is suppressed.
+fn generate_runner(cells, run_through_idx) do
+  -- Strip trailing newline, split into lines.
+  fn cell_lines(src) do
+    let src = if String.ends_with(src, "\n") do
+      String.slice(src, 0, bs(src) - 1)
+    else src
+    end
+    String.split(src, "\n")
+  end
+
+  -- Count substring occurrences: count_in("a(b(c", "(") = 2
+  fn count_in(s, sub) do List.length(String.split(s, sub)) - 1 end
+
+  -- Number of bracket/block openers in a line (forward direction).
+  --   openers = count of `(` and `[` + 1 if line ends with ` do` (opens a block)
+  fn line_openers(line) do
+    let t = trim(line)
+    let b = count_in(line, "(") + count_in(line, "[")
+    let d = if String.ends_with(t, " do") || t == "do" do 1 else 0 end
+    b + d
+  end
+
+  -- Number of bracket/block closers in a line (forward direction).
+  --   closers = count of `)` and `]` + 1 if trimmed line is exactly "end"
+  fn line_closers(line) do
+    let t = trim(line)
+    let b = count_in(line, ")") + count_in(line, "]")
+    let e = if t == "end" do 1 else 0 end
+    b + e
+  end
+
+  -- Split lines into (preamble_lines, last_stmt_lines).
+  -- last_stmt_lines is the COMPLETE last top-level statement, even if multi-line
+  -- (e.g. DataFrame.from_columns([...]), if/match/do blocks).
+  -- Works by scanning backward with bracket+block depth tracking:
+  --   depth = "how many more openers do we still need to find?"
+  --   opener seen going backward → depth decreases
+  --   closer seen going backward → depth increases
+  --   stop when depth reaches 0 (we found the start of the statement)
+  fn split_last(lines) do
+    -- Drop trailing blank lines from a reversed list.
+    fn drop_blank(ls) do
+      match ls do
+        Nil -> Nil
+        Cons(l, rest) ->
+          if String.is_empty(trim(l)) do drop_blank(rest)
+          else ls
+          end
+      end
+    end
+
+    -- Scan rev_lines backward, collecting into stmt_rev until depth balances.
+    -- Because we prepend each line while scanning backward, stmt_rev accumulates
+    -- in FORWARD source order (head = earliest line). Do NOT reverse on return.
+    fn find_start(rev_lines, depth, stmt_rev) do
+      match rev_lines do
+        Nil -> (Nil, stmt_rev)
+        Cons(line, rest) ->
+          let new_depth = depth - line_openers(line) + line_closers(line)
+          if new_depth <= 0 do
+            -- Found the opener. Cons it onto stmt_rev; it is now at the head,
+            -- which is correct since it's the earliest (first) line.
+            (List.reverse(rest), Cons(line, stmt_rev))
+          else
+            find_start(rest, new_depth, Cons(line, stmt_rev))
+          end
+      end
+    end
+
+    let rev = drop_blank(List.reverse(lines))
+    match rev do
+      Nil -> (lines, Nil)
+      Cons(last_line, rev_rest) ->
+        let opens  = line_openers(last_line)
+        let closes = line_closers(last_line)
+        -- A continuation line has closers and no openers of its own
+        -- (e.g. `])`, `))`, standalone `end`)
+        let is_cont = opens == 0 && closes > 0
+        if is_cont do
+          -- Multi-line statement: scan backward until we find the opener(s).
+          find_start(rev_rest, closes, Cons(last_line, Nil))
+        else
+          -- Single-line statement (the common case).
+          (List.reverse(rev_rest), Cons(last_line, Nil))
+        end
+    end
+  end
+
+  -- If the first line of a statement is "let NAME = EXPR" (simple ident,
+  -- optional type annotation), return Some(NAME) so we can use NAME as the
+  -- auto-print result.
+  -- Returns None for patterns (let (a,b) = ...) or if not a let line.
+  fn let_bound_name(line) do
+    let t = trim(line)
+    if String.starts_with(t, "let ") do
+      -- After "let ": extract identifier before optional ":" or "="
+      let after = trim(String.slice(t, 4, bs(t) - 4))
+      -- Strip type annotation: take part before first ":"
+      let ident_raw = match String.split_first(after, ":") do
+        None -> match String.split_first(after, "=") do
+          None -> after
+          Some((b, _)) -> trim(b)
+        end
+        Some((b, _)) -> trim(b)
+      end
+      let ident = trim(ident_raw)
+      -- Reject patterns: must not contain ( ) ,  or spaces
+      let has_paren = match String.split_first(ident, "(") do Some(_) -> true | None -> false end
+      let has_comma = match String.split_first(ident, ",") do Some(_) -> true | None -> false end
+      let has_space = match String.split_first(ident, " ") do Some(_) -> true | None -> false end
+      if String.is_empty(ident) || has_paren || has_comma || has_space do None
+      else Some(ident)
+      end
+    else
+      None
+    end
+  end
+
+  -- Emit one cell inline into main() so bindings accumulate across cells.
+  --
+  -- split_last returns (preamble_lines, last_stmt_lines) where last_stmt_lines
+  -- is the complete last top-level statement (one or many lines).
+  -- We look at the FIRST line of last_stmt to classify it:
+  --
+  --   plain expression  →  let __rN__ = <whole stmt>
+  --   let NAME = EXPR   →  emit stmt verbatim; let __rN__ = NAME   (auto-print)
+  --   let PAT = EXPR    →  emit stmt verbatim; let __rN__ = ()     (suppressed)
+  fn make_cell_inline(src, n) do
+    let ns   = String.from_int(n)
+    let rvar = "__r" ++ ns ++ "__"
+    let svar = "__s" ++ ns ++ "__"
+    let lines = cell_lines(src)
+    match split_last(lines) do
+      (preamble, last_stmt) ->
+        let pre_str = if List.is_empty(preamble) do ""
+          else String.join(List.map(preamble, fn l -> "  " ++ l), "\n") ++ "\n"
+          end
+        -- First line of the last statement drives classification.
+        let first_line = match last_stmt do Cons(l, _) -> l | Nil -> "" end
+        -- Emit the full statement (all lines), indented.
+        let stmt_str = String.join(List.map(last_stmt, fn l -> "  " ++ l), "\n") ++ "\n"
+        -- Determine how to capture the result.
+        let (binding_str, result_expr) =
+          if List.is_empty(last_stmt) do
+            ("", "()")
+          else
+            match let_bound_name(first_line) do
+              Some(_name) ->
+                -- "let name = <multi-line expr>" — emit stmt, suppress result (Jupyter convention)
+                (stmt_str, "()")
+              None ->
+                if String.starts_with(trim(first_line), "let ") do
+                  -- Pattern binding (let (a,b) = ...) — emit, suppress result
+                  (stmt_str, "()")
+                else
+                  -- Plain expression — possibly multi-line; join as single expr
+                  ("", String.join(last_stmt, "\n"))
+                end
+            end
+          end
+        "  println(\"" ++ cell_start_marker(n) ++ "\")\n" ++
+        pre_str ++
+        binding_str ++
+        "  let " ++ rvar ++ " = " ++ result_expr ++ "\n" ++
+        "  let " ++ svar ++ " = to_string(" ++ rvar ++ ")\n" ++
+        "  if " ++ svar ++ " != \"()\" do println(" ++ svar ++ ") else () end\n" ++
+        "  println(\"" ++ cell_end_marker(n) ++ "\")\n"
+    end
+  end
+
+  -- True if the first non-blank line of src starts with `mod ` (a module cell).
+  -- Module cells are embedded as nested mods inside NotebookRunner so their
+  -- functions are accessible via Qualified.name syntax from later cells.
+  fn is_mod_cell(src) do
+    fn first_nonblank(ls) do
+      match ls do
+        Nil -> ""
+        Cons(l, rest) ->
+          if String.is_empty(trim(l)) do first_nonblank(rest)
+          else trim(l)
+          end
+      end
+    end
+    String.starts_with(first_nonblank(cell_lines(src)), "mod ")
+  end
+
+  -- For a module cell: returns (nested_mod_code, main_marker_code).
+  -- The mod block is embedded inside NotebookRunner (nested mods are valid
+  -- March — mod_decl is part of decl_list_r used recursively).
+  -- Only the empty START/END markers go in main() so extract_cell_output works.
+  fn make_mod_cell(src, n) do
+    let ns   = String.from_int(n)
+    let rvar = "__r" ++ ns ++ "__"
+    let svar = "__s" ++ ns ++ "__"
+    let mod_code  = String.join(cell_lines(src), "\n") ++ "\n\n"
+    let main_code =
+      "  println(\"" ++ cell_start_marker(n) ++ "\")\n" ++
+      "  let " ++ rvar ++ " = ()\n" ++
+      "  let " ++ svar ++ " = to_string(" ++ rvar ++ ")\n" ++
+      "  println(\"" ++ cell_end_marker(n) ++ "\")\n"
+    let pair = (mod_code, main_code)
+    pair
+  end
+
+  -- Collect all simple let-bound names from a cell's source (for the variable inspector).
+  fn collect_bound_names(src) do
+    let lines = cell_lines(src)
+    List.filter_map(lines, fn line ->
+      match let_bound_name(line) do
+        Some(name) -> Some(name)
+        None -> None
+      end
+    )
+  end
+
+  -- go returns (nested_mod_chunks, main_body_chunks, bound_names_rev), all in reverse.
+  fn go(cells, mod_rev, body_rev, names_rev, code_n, total_n) do
+    if total_n > run_through_idx do
+      (List.reverse(mod_rev), List.reverse(body_rev), List.reverse(names_rev))
+    else
+      match cells do
+        Nil -> (List.reverse(mod_rev), List.reverse(body_rev), List.reverse(names_rev))
+        Cons(Markdown(_), rest)   -> go(rest, mod_rev, body_rev, names_rev, code_n, total_n + 1)
+        Cons(ServerCell(_), rest) -> go(rest, mod_rev, body_rev, names_rev, code_n, total_n + 1)
+        Cons(Section(_), rest)    -> go(rest, mod_rev, body_rev, names_rev, code_n, total_n + 1)
+        Cons(Code(src), rest) ->
+          if is_mod_cell(src) do
+            let (mod_code, main_code) = make_mod_cell(src, code_n)
+            go(rest,
+              Cons(mod_code, mod_rev),
+              Cons(main_code, body_rev),
+              names_rev,
+              code_n + 1,
+              total_n + 1)
+          else
+            let new_names = collect_bound_names(src)
+            let names_rev = List.append(new_names, names_rev)
+            go(rest,
+              mod_rev,
+              Cons(make_cell_inline(src, code_n), body_rev),
+              names_rev,
+              code_n + 1,
+              total_n + 1)
+          end
+      end
+    end
+  end
+
+  -- Emit a vars block: println each bound name and its to_string value.
+  -- The server extracts this to populate the variable inspector.
+  fn vars_block(names) do
+    if List.is_empty(names) do ""
+    else
+      let lines = List.map(names, fn name ->
+        "  println(\"" ++ name ++ "=\" ++ to_string(" ++ name ++ "))\n"
+      )
+      "  println(\"__MNB_VARS__\")\n" ++
+      String.join(lines, "") ++
+      "  println(\"__MNB_VARS_END__\")\n"
+    end
+  end
+
+  let (mod_chunks, body_chunks, bound_names) = go(cells, Nil, Nil, Nil, 0, 0)
+  let mod_str  = String.join(mod_chunks, "")
+  let body     = String.join(body_chunks, "")
+  let body     = if String.is_empty(body) do "  ()\n" else body end
+  let body     = body ++ vars_block(bound_names)
+  -- Module cells are nested inside NotebookRunner so qualified names like
+  -- Greet.hello resolve correctly from main(). Nested mod declarations are
+  -- valid March (mod_decl is part of decl_list_r used recursively).
+  "mod NotebookRunner do\n\n" ++ mod_str ++ "fn main() do\n" ++ body ++ "end\n\nend\n"
+end
+
+-- Generate a standalone runner for a server cell (wraps source in mod+main).
+fn generate_server_runner(src) do
+  let src = if String.ends_with(src, "\n") do
+    String.slice(src, 0, bs(src) - 1)
+  else src
+  end
+  let indented = String.join(
+    List.map(String.split(src, "\n"), fn l -> "  " ++ l),
+    "\n"
+  ) ++ "\n"
+  "mod ServerCell do\nfn main() do\n" ++ indented ++ "end\nend\n"
+end
+
+-- ── Output extraction ─────────────────────────────────────────────────────────
+
+fn extract_cell_output(stdout, code_n) do
+  let start_marker = cell_start_marker(code_n)
+  let end_marker   = cell_end_marker(code_n)
+  match String.split_first(stdout, start_marker) do
+    None -> ""
+    Some((_, after_start)) ->
+      let after_start =
+        if sw(after_start, "\n") do
+          String.slice(after_start, 1, bs(after_start) - 1)
+        else after_start
+        end
+      match String.split_first(after_start, end_marker) do
+        None -> trim(after_start)
+        Some((between, _)) ->
+          let s = between
+          if String.ends_with(s, "\n") do
+            String.slice(s, 0, bs(s) - 1)
+          else s
+          end
+      end
+  end
+end
+
+-- Extract variable bindings from the __MNB_VARS__ block in stdout.
+-- Returns a list of (name, value) string pairs.
+fn extract_vars(stdout) do
+  match String.split_first(stdout, "__MNB_VARS__\n") do
+    None -> Nil
+    Some((_, after)) ->
+      match String.split_first(after, "\n__MNB_VARS_END__") do
+        None -> Nil
+        Some((block, _)) ->
+          let lines = List.filter(String.split(block, "\n"), fn l -> not(String.is_empty(l)))
+          List.filter_map(lines, fn line -> String.split_first(line, "="))
+      end
+  end
+end
+
+-- Extract __FORGE_ADD__:spec lines from cell stdout.
+-- Returns a list of spec strings.
+fn extract_forge_adds(stdout) do
+  let lines = String.split(stdout, "\n")
+  let prefix = "__FORGE_ADD__:"
+  List.filter_map(lines, fn line ->
+    if String.starts_with(line, prefix) do
+      Some(String.slice(line, bs(prefix), bs(line)))
+    else None
+    end
+  )
+end
+
+-- Remove __FORGE_ADD__:... lines from cell output so they don't appear to the user.
+fn strip_forge_adds(output) do
+  let lines = String.split(output, "\n")
+  let filtered = List.filter(lines, fn line -> not(String.starts_with(line, "__FORGE_ADD__:")))
+  String.join(filtered, "\n")
+end
+
+-- Run `forge add` for a spec string in the notebook's directory.
+-- spec can be: "name --git url", "name --path ../lib", or "name" (registry).
+-- Returns (name, ok?, message) tuple.
+pfn run_forge_add(spec, nb_path) do
+  -- Find directory by stripping the last path component
+  let parts = String.split(nb_path, "/")
+  let nb_dir = if List.length(parts) > 1 do
+    String.join(List.take(parts, List.length(parts) - 1), "/")
+  else "."
+  end
+  let cmd = "cd " ++ nb_dir ++ " && forge add " ++ spec ++ " 2>&1"
+  match Process.run("sh", ["-c", cmd]) do
+    Ok(result) ->
+      let name = match String.split_first(spec, " ") do
+        Some((n, _)) -> n
+        None -> spec
+      end
+      if Process.exit_code(result) == 0 do
+        (name, true, trim(Process.stdout(result)))
+      else
+        (name, false, trim(Process.stdout(result) ++ Process.stderr(result)))
+      end
+    Err(e) ->
+      (spec, false, "failed to run forge add: " ++ to_string(e))
+  end
+end
+
+-- Process all __FORGE_ADD__ sentinels from cell output.
+-- Returns list of (name, ok?, message) tuples.
+fn process_forge_adds(stdout, nb_path) do
+  let specs = extract_forge_adds(stdout)
+  List.map(specs, fn spec -> run_forge_add(spec, nb_path))
+end
+
+-- ── Cell index mapping ────────────────────────────────────────────────────────
+
+-- Map overall cell index to code-cell index (skipping markdown and server cells).
+fn find_code_idx(cells, target_total, code_n, total_n) do
+  match cells do
+    Nil -> code_n - 1
+    Cons(Markdown(_), rest) ->
+      if total_n == target_total do code_n - 1
+      else find_code_idx(rest, target_total, code_n, total_n + 1)
+      end
+    Cons(ServerCell(_), rest) ->
+      if total_n == target_total do code_n - 1
+      else find_code_idx(rest, target_total, code_n, total_n + 1)
+      end
+    Cons(Section(_), rest) ->
+      if total_n == target_total do code_n - 1
+      else find_code_idx(rest, target_total, code_n, total_n + 1)
+      end
+    Cons(Code(_), rest) ->
+      if total_n == target_total do code_n
+      else find_code_idx(rest, target_total, code_n + 1, total_n + 1)
+      end
+  end
+end
+
+end

@@ -1,0 +1,102 @@
+-- nb_json.march — JSON building and parsing helpers for the notebook protocol.
+--
+-- Building (fn):
+--   output_msg/4    : {"type":"output", ...}
+--   notebook_msg/2  : {"type":"notebook", ...}
+--
+-- Parsing (fn):
+--   json_get_str/2  : extract a JSON string field from a parsed Json value
+--   json_get_int/2  : extract a JSON integer field from a parsed Json value
+--
+-- Internal helpers (pfn):
+--   json_opt_str/1  : "null" or json_str(s)
+--   vars_to_json/1  : (name, value) list → JSON object string
+--   cells_to_json/1 : List(Cell) → JSON array string
+
+mod NbJson do
+
+import NbCells
+
+pfn bs(s) do String.byte_size(s) end
+
+-- ── Message builders ──────────────────────────────────────────────────────────
+
+pfn json_opt_str(opt) do
+  match opt do
+    None    -> "null"
+    Some(s) -> json_str(s)
+  end
+end
+
+pfn vars_to_json(vars) do
+  let pairs = List.map(vars, fn pair ->
+    let (name, value) = pair
+    "\"" ++ json_escape(name) ++ "\":" ++ json_str(value)
+  )
+  "{" ++ String.join(pairs, ",") ++ "}"
+end
+
+fn output_msg(idx, stdout_text, error_opt, vars) do
+  "{\"type\":\"output\",\"index\":" ++ String.from_int(idx) ++
+  ",\"stdout\":" ++ json_str(stdout_text) ++
+  ",\"error\":" ++ json_opt_str(error_opt) ++
+  ",\"vars\":" ++ vars_to_json(vars) ++ "}"
+end
+
+pfn cells_to_json(cells) do
+  fn cell_obj(cell) do
+    match cell do
+      Markdown(s)   -> "{\"kind\":\"markdown\",\"source\":" ++ json_str(s) ++ "}"
+      Code(s)       -> "{\"kind\":\"code\",\"source\":" ++ json_str(s) ++ "}"
+      ServerCell(s) -> "{\"kind\":\"server\",\"source\":" ++ json_str(s) ++ "}"
+      Section(t)    -> "{\"kind\":\"section\",\"source\":" ++ json_str(t) ++ "}"
+    end
+  end
+  "[" ++ String.join(List.map(cells, cell_obj), ",") ++ "]"
+end
+
+fn notebook_msg(content, cells) do
+  "{\"type\":\"notebook\",\"source\":" ++ json_str(content) ++
+  ",\"cells\":" ++ cells_to_json(cells) ++ "}"
+end
+
+-- ── JSON parsing helpers ──────────────────────────────────────────────────────
+
+fn json_get_str(jv, key) do
+  match Json.get(jv, key) do
+    None -> None
+    Some(v) ->
+      let s = Json.to_string(v)
+      if bs(s) >= 2 && String.slice(s, 0, 1) == "\"" do
+        let inner = String.slice(s, 1, bs(s) - 2)
+        let inner = String.replace_all(inner, "\\n", "\n")
+        let inner = String.replace_all(inner, "\\t", "\t")
+        let inner = String.replace_all(inner, "\\r", "\r")
+        let inner = String.replace_all(inner, "\\\"", "\"")
+        let inner = String.replace_all(inner, "\\\\", "\\")
+        Some(inner)
+      else None
+      end
+  end
+end
+
+fn json_get_int(jv, key) do
+  match Json.get(jv, key) do
+    None -> None
+    Some(v) ->
+      let s = Json.to_string(v)
+      match String.to_int(s) do
+        Ok(n)  -> Some(n)
+        Err(_) ->
+          match String.split_first(s, ".") do
+            Some((int_part, _)) -> match String.to_int(int_part) do
+              Ok(n)  -> Some(n)
+              Err(_) -> None
+            end
+            None -> None
+          end
+      end
+  end
+end
+
+end

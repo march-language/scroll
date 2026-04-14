@@ -1,0 +1,185 @@
+-- nb_process.march — Background process management for code cells and server cells.
+--
+-- Code-cell processes run a generated NotebookRunner program, capture stdout/stderr,
+-- and signal completion via an exit-code file.  The PID is held in a Vault namespace
+-- so the WS handler can poll or interrupt it.
+--
+-- Server-cell processes run a generated ServerCell program indefinitely.  Their
+-- stdout/stderr is redirected to a log file that the WS handler polls on demand.
+--
+-- Public API (fn):
+--   start_run_proc/3    : spawn a code-cell background process
+--   check_run_proc/1    : poll — None = still running, Some(...) = done
+--   stop_run_proc/1     : kill a code-cell process
+--   start_server_proc/3 : spawn a server-cell background process
+--   stop_server_proc/1  : kill a server-cell process and clear its log
+--   read_server_log/1   : return current server log contents
+--   server_is_running/1 : true if the server process is still alive; cleans up vault on death
+
+mod NbProcess do
+
+import NbCells
+import NbRunner
+
+pfn trim(s) do String.trim(s) end
+
+-- ── Code-cell process helpers ─────────────────────────────────────────────────
+
+pfn run_bg_ns()        do "__forge_nb_runs__" end
+pfn run_tmp_path(idx)  do "/tmp/__forge_nb_run_" ++ String.from_int(idx) ++ "__.march" end
+pfn run_out_path(idx)  do "/tmp/__forge_nb_run_" ++ String.from_int(idx) ++ "__.out" end
+pfn run_err_path(idx)  do "/tmp/__forge_nb_run_" ++ String.from_int(idx) ++ "__.err" end
+pfn run_exit_path(idx) do "/tmp/__forge_nb_run_" ++ String.from_int(idx) ++ "__.exit" end
+pfn run_pid_key(idx)   do String.from_int(idx) ++ ":p" end
+pfn run_cidx_key(idx)  do String.from_int(idx) ++ ":c" end
+
+-- Spawn a code-cell runner in the background; store PID + code-idx in Vault.
+fn start_run_proc(cells, run_through_idx, march_bin) do
+  let cidx  = NbRunner.find_code_idx(cells, run_through_idx, 0, 0)
+  let src   = NbRunner.generate_runner(cells, run_through_idx)
+  let tmp   = run_tmp_path(run_through_idx)
+  let outp  = run_out_path(run_through_idx)
+  let errp  = run_err_path(run_through_idx)
+  let exitp = run_exit_path(run_through_idx)
+  match File.write(tmp, src) do
+    Err(msg) -> Err("failed to write: " ++ msg)
+    Ok(_) ->
+      let _ = File.write(outp, "")
+      let _ = File.write(errp, "")
+      let _ = File.write(exitp, "")
+      let shell = "{ " ++ march_bin ++ " " ++ tmp ++ " >" ++ outp ++ " 2>" ++ errp ++ "; echo $? >" ++ exitp ++ "; } & echo $!"
+      match Process.run("sh", ["-c", shell]) do
+        Err(msg) -> Err("spawn failed: " ++ msg)
+        Ok(result) ->
+          if Process.exit_code(result) != 0 do
+            Err("sh failed: " ++ trim(Process.stderr(result)))
+          else
+            let pid = trim(Process.stdout(result))
+            let _ = Vault.ns_set(run_bg_ns(), run_pid_key(run_through_idx), pid)
+            let _ = Vault.ns_set(run_bg_ns(), run_cidx_key(run_through_idx), String.from_int(cidx))
+            Ok(pid)
+          end
+      end
+  end
+end
+
+-- Poll a running code-cell process.
+-- Returns None if still alive, Some((stdout, error_opt, vars)) when finished.
+fn check_run_proc(run_through_idx) do
+  match Vault.ns_get(run_bg_ns(), run_pid_key(run_through_idx)) do
+    None -> Some(("", Some("no running process for this cell"), Nil))
+    Some(pid) ->
+      match Process.run("sh", ["-c", "kill -0 " ++ pid ++ " 2>/dev/null && echo alive || echo dead"]) do
+        Err(_) -> Some(("", Some("process check failed"), Nil))
+        Ok(chk) ->
+          if trim(Process.stdout(chk)) == "alive" do None
+          else
+            let _ = Vault.ns_drop(run_bg_ns(), run_pid_key(run_through_idx))
+            let cidx_s = match Vault.ns_get(run_bg_ns(), run_cidx_key(run_through_idx)) do
+              Some(s) -> s | None -> "0"
+            end
+            let _ = Vault.ns_drop(run_bg_ns(), run_cidx_key(run_through_idx))
+            let cidx = match String.to_int(cidx_s) do Ok(n) -> n | Err(_) -> 0 end
+            let out_raw  = match File.read(run_out_path(run_through_idx))  do Ok(s) -> s | Err(_) -> "" end
+            let err_raw  = match File.read(run_err_path(run_through_idx))  do Ok(s) -> s | Err(_) -> "" end
+            let exit_raw = match File.read(run_exit_path(run_through_idx)) do Ok(s) -> trim(s) | Err(_) -> "" end
+            let exit_code = match String.to_int(exit_raw) do Ok(n) -> n | Err(_) -> 0 end
+            if exit_code != 0 do
+              let msg = if String.is_empty(trim(err_raw)) do
+                "march exited with code " ++ exit_raw
+              else trim(err_raw)
+              end
+              Some(("", Some(msg), Nil))
+            else
+              let vars = NbRunner.extract_vars(out_raw)
+              Some((NbRunner.extract_cell_output(out_raw, cidx), None, vars))
+            end
+          end
+      end
+  end
+end
+
+-- Kill a running code-cell process and clean up Vault entries.
+fn stop_run_proc(run_through_idx) do
+  match Vault.ns_get(run_bg_ns(), run_pid_key(run_through_idx)) do
+    None -> ()
+    Some(pid) ->
+      let _ = Process.run("sh", ["-c", "kill -TERM " ++ pid ++ " 2>/dev/null || true"])
+      let _ = Vault.ns_drop(run_bg_ns(), run_pid_key(run_through_idx))
+      let _ = Vault.ns_drop(run_bg_ns(), run_cidx_key(run_through_idx))
+      ()
+  end
+end
+
+-- ── Server-cell process helpers ───────────────────────────────────────────────
+
+pfn server_tmp_path(idx) do "/tmp/__forge_nb_srv_" ++ String.from_int(idx) ++ "__.march" end
+pfn server_log_path(idx) do "/tmp/__forge_nb_srv_" ++ String.from_int(idx) ++ "__.log" end
+pfn server_ns()          do "__forge_nb_servers__" end
+
+-- Spawn a server cell as a background OS process (via shell `&`).
+-- Stores the PID string in the Vault namespace. Returns Ok(pid) or Err(msg).
+fn start_server_proc(src, idx, march_bin) do
+  let tmp = server_tmp_path(idx)
+  let log = server_log_path(idx)
+  let runner = NbRunner.generate_server_runner(src)
+  match File.write(tmp, runner) do
+    Err(msg) -> Err("failed to write server temp: " ++ msg)
+    Ok(_) ->
+      -- Clear old log
+      let _ = File.write(log, "")
+      -- Start background: sh -c "march /tmp/... > /tmp/...log 2>&1 & echo $!"
+      let shell_cmd = march_bin ++ " " ++ tmp ++ " > " ++ log ++ " 2>&1 & echo $!"
+      match Process.run("sh", ["-c", shell_cmd]) do
+        Err(msg) -> Err("spawn failed: " ++ msg)
+        Ok(result) ->
+          if Process.exit_code(result) != 0 do
+            Err("sh failed: " ++ trim(Process.stderr(result)))
+          else
+            let pid = trim(Process.stdout(result))
+            let _ = Vault.ns_set(server_ns(), String.from_int(idx), pid)
+            Ok(pid)
+          end
+      end
+  end
+end
+
+-- Kill a running server-cell background process by index and clear its log.
+fn stop_server_proc(idx) do
+  match Vault.ns_get(server_ns(), String.from_int(idx)) do
+    None -> ()
+    Some(pid) ->
+      let _ = Process.run("sh", ["-c", "kill -TERM " ++ pid ++ " 2>/dev/null || true"])
+      let _ = Vault.ns_drop(server_ns(), String.from_int(idx))
+      let _ = File.write(server_log_path(idx), "")
+      ()
+  end
+end
+
+-- Read the current contents of the server log file.
+fn read_server_log(idx) do
+  match File.read(server_log_path(idx)) do
+    Ok(content) -> content
+    Err(_) -> ""
+  end
+end
+
+-- Check if the server process for index idx is still alive (uses kill -0).
+-- Automatically cleans up the Vault entry when the process is found dead.
+fn server_is_running(idx) do
+  match Vault.ns_get(server_ns(), String.from_int(idx)) do
+    None -> false
+    Some(pid) ->
+      match Process.run("sh", ["-c", "kill -0 " ++ pid ++ " 2>/dev/null && echo alive || echo dead"]) do
+        Err(_) -> false
+        Ok(result) ->
+          let alive = trim(Process.stdout(result)) == "alive"
+          let _ = if alive do ()
+            else Vault.ns_drop(server_ns(), String.from_int(idx))
+            end
+          alive
+      end
+  end
+end
+
+end
