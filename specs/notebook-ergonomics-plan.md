@@ -1,6 +1,6 @@
 # Notebook Ergonomics Plan
 
-Closing the gap between `forge notebook serve` and Jupyter / Livebook.
+Closing the gap between `forge scroll.serve` and Jupyter / Livebook.
 
 **Current state (April 2026):** Code / Markdown / Server cells · REPL-style
 cross-cell scoping · Run / Run All · Shift+Enter / Ctrl+S · elapsed time ·
@@ -206,7 +206,7 @@ Register in `forge/bin/main.ml` alongside the other subcommands.
 
 ### 4.2 Notebook-local project
 
-When `forge notebook serve mynotebook.scrollmd` starts, the OCaml shim
+When `forge scroll.serve mynotebook.scrollmd` starts, the OCaml shim
 (`cmd_notebook.ml`) looks for `mynotebook.toml` alongside the `.scrollmd` file. If
 absent, it creates one:
 

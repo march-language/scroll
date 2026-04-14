@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-End-to-end test suite for Scroll (forge notebook serve).
+End-to-end test suite for Scroll (forge scroll.serve).
 
 Runs the notebook server, connects via WebSocket, and validates:
   - load / parse_cells
@@ -112,8 +112,7 @@ def run_cell(sock, nb_content, cell_idx, timeout=15):
 
 def start_server(nb_path):
     proc = subprocess.Popen(
-        [FORGE_BIN, "notebook", "serve", nb_path,
-         "--port", str(SERVER_PORT), "--no-open"],
+        [FORGE_BIN, "scroll.serve", nb_path, "--port", str(SERVER_PORT)],
         stdout=subprocess.PIPE, stderr=subprocess.PIPE
     )
     # Wait for server to be ready
