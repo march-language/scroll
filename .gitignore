@@ -1,3 +1,5 @@
 .march/
 .claude/
+.venv/
 *.ll
+__pycache__/
