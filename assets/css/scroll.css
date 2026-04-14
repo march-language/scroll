@@ -173,5 +173,16 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif;
 .cm-editor .cm-matchingBracket{color:var(--acc)!important;background:color-mix(in srgb,var(--acc) 15%,transparent);outline:1px solid color-mix(in srgb,var(--acc) 30%,transparent)}
 .cell-server-wrap .cm-editor{background:color-mix(in srgb,var(--fn) 5%,var(--code))!important}
 
+/* ── Toolbar icon/label swap ─────────────────────── */
+.btn-ic{display:none}
+.btn-lb{display:inline}
+
 /* ── Responsive ──────────────────────────────────── */
+@media(max-width:960px){
+  #toolbar{padding:8px 12px;gap:6px}
+  .btn{padding:5px 9px}
+  .btn-ic{display:inline}
+  .btn-lb{display:none}
+  #nb-title{font-size:12px;max-width:120px}
+}
 @media(max-width:768px){#notebook{padding:24px 16px 80px}.cell{max-width:100%}#inspector{display:none}}

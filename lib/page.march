@@ -31,15 +31,15 @@ mod Page do
         <body data-nb-path="${nb_path}" data-ws-port="${to_string(port)}">
         <div id="toolbar">
         <h1 id="nb-title">${nb_path}</h1>
-        <button class="btn btn-secondary" id="btn-add-md">+ Markdown</button>
-        <button class="btn btn-secondary" id="btn-add-code">+ Code</button>
-        <button class="btn btn-server" id="btn-add-server">+ Server</button>
-        <button class="btn btn-secondary" id="btn-add-section">+ Section</button>
-        <button class="btn btn-primary" id="btn-run-all">▶ Run All</button>
-        <button class="btn btn-secondary" id="btn-clear-all">Clear All</button>
-        <button class="btn btn-secondary" id="btn-save">Save</button>
-        <button class="btn btn-secondary" id="btn-export" title="Export notebook to HTML">Export HTML</button>
-        <button class="btn btn-secondary" id="btn-inspector" title="Toggle variable inspector">𝑥 Inspector</button>
+        <button class="btn btn-secondary" id="btn-add-md" title="Add Markdown cell"><span class="btn-ic">+ md</span><span class="btn-lb">+ Markdown</span></button>
+        <button class="btn btn-secondary" id="btn-add-code" title="Add Code cell"><span class="btn-ic">+ code</span><span class="btn-lb">+ Code</span></button>
+        <button class="btn btn-server" id="btn-add-server" title="Add Server cell"><span class="btn-ic">+ srv</span><span class="btn-lb">+ Server</span></button>
+        <button class="btn btn-secondary" id="btn-add-section" title="Add Section divider"><span class="btn-ic">+ §</span><span class="btn-lb">+ Section</span></button>
+        <button class="btn btn-primary" id="btn-run-all" title="Run all cells"><span class="btn-ic">▶▶</span><span class="btn-lb">▶ Run All</span></button>
+        <button class="btn btn-secondary" id="btn-clear-all" title="Clear all outputs"><span class="btn-ic">⌫</span><span class="btn-lb">Clear All</span></button>
+        <button class="btn btn-secondary" id="btn-save" title="Save notebook"><span class="btn-ic">⇣</span><span class="btn-lb">Save</span></button>
+        <button class="btn btn-secondary" id="btn-export" title="Export notebook to HTML"><span class="btn-ic">↗</span><span class="btn-lb">Export HTML</span></button>
+        <button class="btn btn-secondary" id="btn-inspector" title="Toggle variable inspector"><span class="btn-ic">𝑥</span><span class="btn-lb">𝑥 Inspector</span></button>
         <button id="theme-toggle" title="Toggle light/dark theme">☽</button>
         <span id="mode-badge">COMMAND</span>
         <div id="status">connecting</div>
