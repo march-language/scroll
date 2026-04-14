@@ -507,6 +507,58 @@ fn extract_vars(stdout) do
   end
 end
 
+-- Extract __FORGE_ADD__:spec lines from cell stdout.
+-- Returns a list of spec strings.
+fn extract_forge_adds(stdout) do
+  let lines = String.split(stdout, "\n")
+  let prefix = "__FORGE_ADD__:"
+  List.filter_map(lines, fn line ->
+    if String.starts_with(line, prefix) do
+      Some(String.slice(line, bs(prefix), bs(line)))
+    else None
+    end
+  )
+end
+
+-- Remove __FORGE_ADD__:... lines from cell output so they don't appear to the user.
+pfn strip_forge_adds(output) do
+  let lines = String.split(output, "\n")
+  let filtered = List.filter(lines, fn line -> not(String.starts_with(line, "__FORGE_ADD__:")))
+  String.join(filtered, "\n")
+end
+
+-- Run `forge add` for a spec string in the notebook's directory.
+-- spec can be: "name --git url", "name --path ../lib", or "name" (registry).
+-- Returns (name, ok?) tuple.
+pfn run_forge_add(spec, nb_path) do
+  let nb_dir = match String.split_last(nb_path, "/") do
+    Some((dir, _)) -> dir
+    None -> "."
+  end
+  let cmd = "cd " ++ nb_dir ++ " && forge add " ++ spec ++ " 2>&1"
+  match Process.run("sh", ["-c", cmd]) do
+    Ok(result) ->
+      let name = match String.split_first(spec, " ") do
+        Some((n, _)) -> n
+        None -> spec
+      end
+      if Process.exit_code(result) == 0 do
+        (name, true, trim(Process.stdout(result)))
+      else
+        (name, false, trim(Process.stdout(result) ++ Process.stderr(result)))
+      end
+    Err(e) ->
+      (spec, false, "failed to run forge add: " ++ to_string(e))
+  end
+end
+
+-- Process all __FORGE_ADD__ sentinels from cell output.
+-- Returns list of (name, ok?, message) tuples.
+pfn process_forge_adds(stdout, nb_path) do
+  let specs = extract_forge_adds(stdout)
+  List.map(specs, fn spec -> run_forge_add(spec, nb_path))
+end
+
 -- Map overall cell index to code-cell index (skipping markdown and server cells).
 pfn find_code_idx(cells, target_total, code_n, total_n) do
   match cells do
@@ -838,7 +890,25 @@ pfn handle_ws_msg(msg, nb_path, march_bin, socket) do
                     "{\"type\":\"still_running\",\"index\":" ++ String.from_int(idx) ++ "}"
                   ))
                 Some((out, err_opt, vars)) ->
-                  WebSocket.send_frame(socket, TextFrame(output_msg(idx, out, err_opt, vars)))
+                  -- Process __FORGE_ADD__ sentinels and strip them from output
+                  let add_results = process_forge_adds(out, nb_path)
+                  let clean_out = strip_forge_adds(out)
+                  WebSocket.send_frame(socket, TextFrame(output_msg(idx, clean_out, err_opt, vars)))
+                  -- Send dep_added/dep_error messages for each Forge.add() call
+                  List.each(add_results, fn result ->
+                    let (name, ok, message) = result
+                    if ok do
+                      WebSocket.send_frame(socket, TextFrame(
+                        "{\"type\":\"dep_added\",\"name\":" ++ json_str(name) ++
+                        ",\"status\":\"ok\",\"message\":" ++ json_str(message) ++ "}"
+                      ))
+                    else
+                      WebSocket.send_frame(socket, TextFrame(
+                        "{\"type\":\"dep_error\",\"name\":" ++ json_str(name) ++
+                        ",\"message\":" ++ json_str(message) ++ "}"
+                      ))
+                    end
+                  )
               end
           end
 
@@ -1277,6 +1347,10 @@ function handleMsg(msg) {
       updateCell(idx);
     }
     setStatus("err", msg.message);
+  } else if (msg.type === "dep_added") {
+    showToast("Package installed: " + msg.name, "ok");
+  } else if (msg.type === "dep_error") {
+    showToast("Package error: " + msg.name + " — " + msg.message, "err");
   } else if (msg.type === "error") {
     setStatus("err", msg.message);
     if (pendingRun !== null) { pendingRun = null; }
@@ -1965,6 +2039,17 @@ function setStatus(cls, text) {
   const el = document.getElementById("status");
   el.className = cls;
   el.textContent = text;
+}
+
+function showToast(message, type) {
+  const toast = document.createElement("div");
+  toast.textContent = message;
+  toast.style.cssText = "position:fixed;bottom:24px;right:24px;padding:12px 20px;" +
+    "border-radius:8px;color:#fff;font-size:14px;z-index:9999;transition:opacity 0.5s;" +
+    "background:" + (type === "ok" ? "#22c55e" : "#ef4444") + ";";
+  document.body.appendChild(toast);
+  setTimeout(() => { toast.style.opacity = "0"; }, 3000);
+  setTimeout(() => { toast.remove(); }, 3500);
 }
 
 // ── Export to HTML ────────────────────────────────────────────────────────────

@@ -186,6 +186,36 @@ describe "extract_cell_output" do
 
 end
 
+-- ── extract_forge_adds ───────────────────────────────────────────────────────
+
+describe "extract_forge_adds" do
+
+  test "extracts forge add spec from sentinel line" do
+    let stdout = "__FORGE_ADD__:json --git https://github.com/march-lang/json\n"
+    let adds = ForgeNotebookServer.extract_forge_adds(stdout)
+    assert (adds == ["json --git https://github.com/march-lang/json"])
+  end
+
+  test "returns empty list when no sentinels present" do
+    let stdout = "hello world\nno adds here\n"
+    let adds = ForgeNotebookServer.extract_forge_adds(stdout)
+    assert (List.length(adds) == 0)
+  end
+
+  test "extracts multiple forge adds" do
+    let stdout = "__FORGE_ADD__:json --git url1\n__FORGE_ADD__:utils --path ../utils\n"
+    let adds = ForgeNotebookServer.extract_forge_adds(stdout)
+    assert (List.length(adds) == 2)
+  end
+
+  test "ignores non-sentinel lines mixed in" do
+    let stdout = "hello\n__FORGE_ADD__:json\nworld\n"
+    let adds = ForgeNotebookServer.extract_forge_adds(stdout)
+    assert (adds == ["json"])
+  end
+
+end
+
 -- ── generate_runner ───────────────────────────────────────────────────────────
 
 describe "generate_runner" do
