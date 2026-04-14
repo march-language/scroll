@@ -1099,9 +1099,8 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif;
 .add-btn{padding:2px 8px;font-size:11px;border-radius:4px;border:1px solid var(--bdr);background:transparent;color:var(--dim);cursor:pointer;transition:all .1s}
 .add-btn:hover{border-color:var(--acc);color:var(--acc)}
 
-/* ── Source textarea ─────────────────────────────── */
-textarea.cell-src{display:block;width:100%;background:var(--code);color:var(--code-text);font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;font-size:13px;line-height:1.65;padding:14px 18px;border:none;resize:none;outline:none;tab-size:2;overflow:hidden}
-.cell-server-wrap textarea.cell-src{background:color-mix(in srgb,var(--fn) 5%,var(--code));color:var(--fn)}
+/* ── Source editor ───────────────────────────────── */
+.cm-host{display:block;width:100%}
 
 /* ── Output areas (always dark background, always light text) ──── */
 .cell-out{border-top:1px solid var(--bdr);padding:10px 18px;font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;font-size:13px;white-space:pre-wrap;word-break:break-word;color:var(--code-dim);background:var(--code)}
@@ -1131,7 +1130,7 @@ textarea.cell-src{display:block;width:100%;background:var(--code);color:var(--co
 .copy-btn{position:absolute;top:6px;right:8px;padding:2px 8px;font-size:11px;border-radius:4px;border:1px solid var(--bdr);background:var(--card);color:var(--dim);cursor:pointer;opacity:0;transition:opacity .15s}
 .cell-out-wrap:hover .copy-btn{opacity:1}
 .copy-btn:hover{color:var(--acc);border-color:var(--acc)}
-.src-collapsed textarea{display:none!important}
+.src-collapsed .cm-host{display:none!important}
 .src-collapsed .src-preview{display:block}
 .src-preview{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;font-size:13px;color:var(--dim);padding:8px 18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
 .src-preview:hover{color:var(--acc)}
@@ -1180,9 +1179,24 @@ textarea.cell-src{display:block;width:100%;background:var(--code);color:var(--co
 .inspector-name{color:var(--acc);min-width:80px;flex-shrink:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .inspector-val{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
 
+/* ── CodeMirror overrides ─────────────────────────── */
+.cm-host{min-height:48px}
+.cm-editor{background:var(--code)!important;font-size:13px}
+.cm-editor .cm-content{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;padding:14px 18px;caret-color:var(--acc)}
+.cm-editor .cm-line{line-height:1.65}
+.cm-editor .cm-gutters{display:none}
+.cm-editor .cm-activeLine{background:color-mix(in srgb,var(--acc) 5%,transparent)!important}
+.cm-editor .cm-selectionBackground{background:color-mix(in srgb,var(--acc) 20%,transparent)!important}
+.cm-editor.cm-focused .cm-selectionBackground{background:color-mix(in srgb,var(--acc) 25%,transparent)!important}
+.cm-editor .cm-cursor{border-left-color:var(--acc)!important}
+.cm-editor.cm-focused{outline:none!important}
+.cm-editor .cm-matchingBracket{color:var(--acc)!important;background:color-mix(in srgb,var(--acc) 15%,transparent);outline:1px solid color-mix(in srgb,var(--acc) 30%,transparent)}
+.cell-server-wrap .cm-editor{background:color-mix(in srgb,var(--fn) 5%,var(--code))!important}
+
 /* ── Responsive ──────────────────────────────────── */
 @media(max-width:768px){#notebook{padding:24px 16px 80px}.cell{max-width:100%}#inspector{display:none}}
 </style>
+<script type="importmap">{"imports":{"@codemirror/state":"https://esm.sh/@codemirror/state@6","@codemirror/view":"https://esm.sh/@codemirror/view@6","@codemirror/language":"https://esm.sh/@codemirror/language@6","@codemirror/commands":"https://esm.sh/@codemirror/commands@6","@lezer/highlight":"https://esm.sh/@lezer/highlight@1"}}</script>
 </head>
 <body>
 <div id="toolbar">
@@ -1245,6 +1259,147 @@ textarea.cell-src{display:block;width:100%;background:var(--code);color:var(--co
 </div>
 </div>
 
+<script type="module">
+import {EditorState} from "@codemirror/state";
+import {EditorView, keymap, highlightActiveLine, drawSelection, highlightSpecialChars} from "@codemirror/view";
+import {defaultKeymap, history, historyKeymap, indentWithTab} from "@codemirror/commands";
+import {LanguageSupport, StreamLanguage, bracketMatching} from "@codemirror/language";
+import {tags as t} from "@lezer/highlight";
+import {HighlightStyle, syntaxHighlighting} from "@codemirror/language";
+
+// ── March language mode ──────────────────────────────────────────────────
+const marchKeywords = new Set(["do","end","fn","pfn","let","match","if","else","mod","type","actor","assert","import","use","with","and","or","not","true","false","in","when"]);
+const marchBuiltins = new Set(["println","to_string","spawn","send","receive","panic","self"]);
+
+const marchLang = StreamLanguage.define({
+  startState() { return {inString:false,inTriple:false}; },
+  token(stream, state) {
+    if (state.inTriple) {
+      if (stream.match('\"\"\"')) { state.inTriple = false; return "string"; }
+      stream.next(); return "string";
+    }
+    if (state.inString) {
+      if (stream.eat("\\\\")) { stream.next(); return "string"; }
+      if (stream.eat('"')) { state.inString = false; return "string"; }
+      stream.next(); return "string";
+    }
+    if (stream.match("--")) { stream.skipToEnd(); return "comment"; }
+    if (stream.match('\"\"\"')) { state.inTriple = true; return "string"; }
+    if (stream.eat('"')) { state.inString = true; return "string"; }
+    if (stream.match(/^0[xX][0-9a-fA-F_]+/) || stream.match(/^[0-9][0-9_]*(\.[0-9_]+)?([eE][+-]?[0-9]+)?/)) return "number";
+    if (stream.match(/^[|>]{2}|^->|^\+\+|^[=!<>]=|^<-/)) return "operator";
+    if (stream.match(/^[+\-*\/%<>=!&|^~@#]/)) return "operator";
+    if (stream.match(/^[()[\]{},;:\.]/)) return "punctuation";
+    if (stream.match(/^[A-Z][A-Za-z0-9_]*/)) {
+      if (stream.eat(".")) return "meta";
+      return "type";
+    }
+    if (stream.match(/^[a-z_][A-Za-z0-9_]*/)) {
+      const w = stream.current();
+      if (w === "true" || w === "false") return "atom";
+      if (marchKeywords.has(w)) return "keyword";
+      if (marchBuiltins.has(w)) return "builtin";
+      if (stream.peek() === "(") return "def";
+      return "variable";
+    }
+    stream.next();
+    return null;
+  }
+});
+
+const marchHighlight = HighlightStyle.define([
+  {tag: t.keyword,                        color: "#c792ea"},
+  {tag: t.definition(t.variableName),     color: "var(--acc)"},
+  {tag: t.variableName,                   color: "var(--code-text)"},
+  {tag: t.typeName,                       color: "#FBBF24"},
+  {tag: t.string,                         color: "#c3e88d"},
+  {tag: t.number,                         color: "#f78c6c"},
+  {tag: t.comment,                        color: "#546e7a", fontStyle: "italic"},
+  {tag: t.operator,                       color: "#89ddff"},
+  {tag: t.punctuation,                    color: "#89ddff"},
+  {tag: t.meta,                            color: "#82aaff"},
+  {tag: t.atom,                           color: "#f78c6c"},
+  {tag: t.standard(t.name),               color: "var(--acc)"},
+]);
+
+// ── Editor factory ──────────────────────────────────────────────────────
+const editors = new Map(); // idx -> EditorView
+
+window._cmEditors = editors;
+
+window.createCMEditor = function(container, idx, source, onChange) {
+  if (editors.has(idx)) { editors.get(idx).destroy(); editors.delete(idx); }
+  const updateListener = EditorView.updateListener.of(update => {
+    if (update.docChanged && onChange) onChange(update.state.doc.toString());
+  });
+  // Notebook keybindings: Cmd/Ctrl+Enter, Shift+Enter, Escape
+  const notebookKeymap = keymap.of([
+    {key: "Mod-Enter", run: () => {
+      const cell = window._nbCells && window._nbCells[idx];
+      if (cell && cell.kind === "code" && window.runCell) window.runCell(idx);
+      else if (cell && cell.kind === "server" && window.startServer) window.startServer(idx);
+      return true;
+    }},
+    {key: "Shift-Enter", run: () => {
+      const cell = window._nbCells && window._nbCells[idx];
+      if (cell && cell.kind === "code" && window.runCell) window.runCell(idx);
+      const nextIdx = idx + 1;
+      if (window._nbCells && nextIdx < window._nbCells.length) {
+        setTimeout(() => { if (window.focusCM) window.focusCM(nextIdx); }, 30);
+      } else if (window.addCell) {
+        window.addCell("code", idx);
+      }
+      return true;
+    }},
+    {key: "Escape", run: () => {
+      if (window.cmdSelect) window.cmdSelect(idx, false);
+      return true;
+    }},
+  ]);
+  const view = new EditorView({
+    state: EditorState.create({
+      doc: source || "",
+      extensions: [
+        highlightSpecialChars(),
+        history(),
+        drawSelection(),
+        highlightActiveLine(),
+        bracketMatching(),
+        new LanguageSupport(marchLang),
+        syntaxHighlighting(marchHighlight),
+        notebookKeymap,
+        keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+        updateListener,
+        EditorView.lineWrapping,
+        EditorState.tabSize.of(2),
+      ]
+    }),
+    parent: container,
+  });
+  editors.set(idx, view);
+  return view;
+};
+
+window.getCMValue = function(idx) {
+  const v = editors.get(idx);
+  return v ? v.state.doc.toString() : null;
+};
+
+window.focusCM = function(idx) {
+  const v = editors.get(idx);
+  if (v) { v.focus(); v.dispatch({selection:{anchor:v.state.doc.length}}); }
+};
+
+window.destroyCM = function(idx) {
+  const v = editors.get(idx);
+  if (v) { v.destroy(); editors.delete(idx); }
+};
+
+window._cmReady = true;
+// Signal to the main script that CM is loaded
+if (window._onCMReady) window._onCMReady();
+</script>
+
 <script>
 // ── Theme ──────────────────────────────────────────────────────────────────
 function getTheme() {
@@ -1272,6 +1427,19 @@ const WS_URL  = "ws://localhost:""" ++ String.from_int(port) ++ """/ws";
 
 let cells = [];   // [{kind, source, output, error, running, server_log, pid}]
 let ws = null;
+
+// When CM module finishes loading, attach editors to any already-rendered code cells
+if (!window._cmReady) {
+  window._onCMReady = function() {
+    document.querySelectorAll(".cm-host[data-cell]").forEach(host => {
+      const idx = parseInt(host.dataset.cell, 10);
+      if (!isNaN(idx) && cells[idx]) {
+        const wrap = host.closest(".cell-wrap");
+        if (wrap) attachEditorEvents(wrap, idx);
+      }
+    });
+  };
+}
 let pendingRun = null;
 let inspectorVars = {};   // name -> value string
 let inspectorOpen = false;
@@ -1297,7 +1465,7 @@ function connect() {
 
 function send(obj) { if (ws && ws.readyState===1) ws.send(JSON.stringify(obj)); }
 
-// Re-size all textareas once custom fonts finish loading
+// Re-size markdown textareas once custom fonts finish loading
 if (document.fonts && document.fonts.ready) {
   document.fonts.ready.then(resizeAllTextareas);
 }
@@ -1307,6 +1475,7 @@ if (document.fonts && document.fonts.ready) {
 function handleMsg(msg) {
   if (msg.type === "notebook") {
     cells = msg.cells.map(c => ({...c, output:"", error:null, running:false, server_log:"", pid:null, _elapsed_ms:null}));
+    window._nbCells = cells;
     render();
     setStatus("ok", "loaded");
   } else if (msg.type === "running") {
@@ -1548,8 +1717,13 @@ function addCell(kind, afterIdx) {
   const newCell = {kind, source:"", output:"", error:null, running:false, server_log:"", pid:null};
   cells.splice(afterIdx+1, 0, newCell);
   render();
-  const ta = document.querySelector(`[data-idx="\${afterIdx+1}"] textarea`);
-  if (ta) ta.focus();
+  const newIdx = afterIdx + 1;
+  if ((kind === "code" || kind === "server") && window.focusCM) {
+    setTimeout(() => window.focusCM(newIdx), 30);
+  } else {
+    const ta = document.querySelector(`[data-idx="\${newIdx}"] textarea`);
+    if (ta) ta.focus();
+  }
 }
 
 function deleteCell(idx) {
@@ -1689,13 +1863,11 @@ function render() {
       attachMarkdownEvents(wrap, idx);
     } else if (cell.kind === "server") {
       wrap.innerHTML = serverCell(idx, cell);
-      autoResize(wrap.querySelector("textarea"));
       attachEditorEvents(wrap, idx);
     } else if (cell.kind === "section") {
       wrap.innerHTML = sectionCell(idx, cell);
     } else {
       wrap.innerHTML = codeCell(idx, cell);
-      autoResize(wrap.querySelector("textarea"));
       attachEditorEvents(wrap, idx);
     }
 
@@ -1733,7 +1905,7 @@ function render() {
     const selWrap = document.querySelector(`[data-idx="\${cmdSelected}"]`);
     if (selWrap) { selWrap.classList.add("cmd-selected"); selWrap.setAttribute("tabindex", "-1"); }
   }
-  // Defer a second resize pass so custom fonts (JetBrains Mono) are laid out
+  // Defer a resize pass for markdown textareas (code cells use CM)
   requestAnimationFrame(resizeAllTextareas);
 }
 
@@ -1913,7 +2085,7 @@ function codeCell(idx, cell) {
       </div>
       \${actionBtn}
     </div>
-    <textarea class="cell-src" data-cell="\${idx}" spellcheck="false">\${esc(cell.source)}</textarea>
+    <div class="cm-host" data-cell="\${idx}"></div>
     \${srcPreview}
     \${outHtml}
   </div>`;
@@ -1944,7 +2116,7 @@ function serverCell(idx, cell) {
       </div>
       \${actionBtn}
     </div>
-    <textarea class="cell-src" data-cell="\${idx}" spellcheck="false">\${esc(cell.source)}</textarea>
+    <div class="cm-host" data-cell="\${idx}"></div>
     \${outHtml}\${errHtml}
   </div>`;
 }
@@ -1953,21 +2125,20 @@ function updateCell(idx) {
   const wrap = document.querySelector(`[data-idx="\${idx}"]`);
   if (!wrap) return;
   const cell = cells[idx];
-  // Capture current textarea value before overwriting innerHTML
-  const srcArea = wrap.querySelector("textarea[data-cell]");
-  if (srcArea) cell.source = srcArea.value;
+  // Capture current CM editor value before overwriting innerHTML
+  const cmVal = window.getCMValue && window.getCMValue(idx);
+  if (cmVal != null) cell.source = cmVal;
+  if (window.destroyCM) window.destroyCM(idx);
   if (cell.kind === "markdown") {
     wrap.innerHTML = markdownCell(idx, cell);
     attachMarkdownEvents(wrap, idx);
   } else if (cell.kind === "server") {
     wrap.innerHTML = serverCell(idx, cell);
-    autoResize(wrap.querySelector("textarea"));
     attachEditorEvents(wrap, idx);
     const out = document.getElementById(`srv-out-\${idx}`);
     if (out) out.scrollTop = out.scrollHeight;
   } else if (cell.kind === "code") {
     wrap.innerHTML = codeCell(idx, cell);
-    autoResize(wrap.querySelector("textarea"));
     attachEditorEvents(wrap, idx);
   } else if (cell.kind === "section") {
     wrap.innerHTML = sectionCell(idx, cell);
@@ -1984,54 +2155,23 @@ function updateCell(idx) {
   }
   // Click on wrapper → command mode
   wrap.addEventListener("click", (e) => {
-    if (!e.target.closest("button,textarea,a,input")) cmdSelect(idx, false);
+    if (!e.target.closest("button,textarea,a,input,.cm-editor")) cmdSelect(idx, false);
   });
 }
 
 function attachEditorEvents(wrap, idx) {
-  const ta = wrap.querySelector("textarea");
-  if (!ta) return;
-  installEscapeHandler(ta, idx);
-  ta.addEventListener("input", () => {
-    cells[idx].source = ta.value;
-    autoResize(ta);
+  const host = wrap.querySelector(".cm-host");
+  if (!host || !window._cmReady) return;
+  const source = cells[idx].source || "";
+  window.createCMEditor(host, idx, source, (newVal) => {
+    cells[idx].source = newVal;
     // Mark this cell and all later code cells as dirty (output may be stale)
     if (cells[idx].kind === "code") {
       for (let i = idx; i < cells.length; i++) {
         if (cells[i].kind === "code") cells[i]._dirty = true;
       }
-      // Reflect dirty state in DOM without full re-render
       const cellDiv = wrap.querySelector(".cell-code");
       if (cellDiv) cellDiv.setAttribute("data-dirty", "1");
-    }
-  });
-  ta.addEventListener("keydown", (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-      e.preventDefault();
-      if (cells[idx].kind === "code") runCell(idx);
-      else if (cells[idx].kind === "server") startServer(idx);
-      else { cells[idx]._editing = false; render(); }
-    }
-    // Shift+Enter: run cell and move focus to next (Jupyter muscle memory)
-    if (e.shiftKey && !e.metaKey && !e.ctrlKey && e.key === "Enter") {
-      e.preventDefault();
-      if (cells[idx].kind === "code") runCell(idx);
-      const nextIdx = idx + 1;
-      if (nextIdx < cells.length) {
-        setTimeout(() => {
-          const nextWrap = document.querySelector(`[data-idx="\${nextIdx}"]`);
-          const nextTa = nextWrap && nextWrap.querySelector("textarea");
-          if (nextTa) nextTa.focus();
-        }, 30);
-      } else {
-        addCell("code", idx);
-      }
-    }
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const s = ta.selectionStart, end = ta.selectionEnd;
-      ta.value = ta.value.slice(0,s) + "  " + ta.value.slice(end);
-      ta.selectionStart = ta.selectionEnd = s + 2;
     }
   });
 }
@@ -2043,7 +2183,7 @@ function autoResize(ta) {
 }
 
 function resizeAllTextareas() {
-  document.querySelectorAll("textarea").forEach(autoResize);
+  document.querySelectorAll(".cell-md-editor textarea").forEach(autoResize);
 }
 
 function toggleInspector() {
@@ -2224,12 +2364,16 @@ let cmdLastKey  = "";
 let cmdLastMs   = 0;
 
 function cmdSelect(idx, scrollIntoView) {
-  // Persist current textarea value before switching
+  // Persist current editor value before switching
   if (cmdSelected >= 0 && cells[cmdSelected]) {
     const oldWrap = document.querySelector(`[data-idx="\${cmdSelected}"]`);
     if (oldWrap) {
-      const ta = oldWrap.querySelector("textarea[data-cell]");
-      if (ta) cells[cmdSelected].source = ta.value;
+      const cmVal = window.getCMValue && window.getCMValue(cmdSelected);
+      if (cmVal != null) cells[cmdSelected].source = cmVal;
+      else {
+        const ta = oldWrap.querySelector("textarea[data-cell]");
+        if (ta) cells[cmdSelected].source = ta.value;
+      }
       oldWrap.classList.remove("cmd-selected");
     }
   }
@@ -2264,8 +2408,13 @@ function cmdEnterEdit(idx) {
   }
   const wrap = document.querySelector(`[data-idx="\${idx}"]`);
   if (!wrap) return;
-  const ta = wrap.querySelector("textarea");
-  if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  const kind = cells[idx] && cells[idx].kind;
+  if ((kind === "code" || kind === "server") && window.focusCM) {
+    window.focusCM(idx);
+  } else {
+    const ta = wrap.querySelector("textarea");
+    if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  }
   document.getElementById("mode-badge").className = "";
 }
 
@@ -2308,7 +2457,8 @@ function installEscapeHandler(ta, idx) {
 
 document.addEventListener("keydown", (e) => {
   const tag = document.activeElement && document.activeElement.tagName;
-  const inInput = tag === "TEXTAREA" || tag === "INPUT";
+  const inCM = !!(document.activeElement && document.activeElement.closest && document.activeElement.closest(".cm-editor"));
+  const inInput = tag === "TEXTAREA" || tag === "INPUT" || inCM;
 
   // Global shortcuts (work in any mode)
   if ((e.metaKey||e.ctrlKey) && e.shiftKey && e.key==="Enter") { e.preventDefault(); runAll(); return; }
@@ -2374,6 +2524,13 @@ document.addEventListener("keydown", (e) => {
     cmdLastMs  = now;
   }
 });
+
+// Expose to CM module keybindings
+window._nbCells = cells;
+window.runCell = runCell;
+window.startServer = startServer;
+window.addCell = addCell;
+window.cmdSelect = cmdSelect;
 
 connect();
 </script>
