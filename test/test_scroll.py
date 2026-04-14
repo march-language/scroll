@@ -170,7 +170,7 @@ def check_no_error(name, error):
 # ── Notebook content builder ───────────────────────────────────────────────────
 
 def nb(*cells):
-    """Build .mnb content from a list of (kind, source) tuples."""
+    """Build .scrollmd content from a list of (kind, source) tuples."""
     parts = []
     for kind, src in cells:
         if kind == "md":
@@ -379,7 +379,7 @@ def test_save_and_reload(sock, nb_path):
 # ── Main ───────────────────────────────────────────────────────────────────────
 
 def main():
-    with tempfile.NamedTemporaryFile(suffix=".mnb", mode="w", delete=False) as f:
+    with tempfile.NamedTemporaryFile(suffix=".scrollmd", mode="w", delete=False) as f:
         f.write(nb(("md", "# Test Notebook"), ("code", 'println("ready")')))
         nb_path = f.name
 

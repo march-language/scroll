@@ -5,42 +5,104 @@
 --   2. Contains the HTTP router, CLI arg parser, and main entry point
 --
 -- Sub-modules:
---   NbCells   — Cell ADT, parsing, string helpers
---   NbRunner  — Code generation, output extraction
---   NbProcess — Background process management
---   NbJson    — JSON message builders and parsers
---   NbWs      — WebSocket handler and receive loop
---   NbUi      — Browser UI HTML/CSS/JS
+--   Cells     — Cell ADT, parsing, string helpers
+--   Runner    — Code generation, output extraction
+--   Processes — Background process management
+--   Protocol  — JSON message builders and parsers
+--   Session   — WebSocket handler and receive loop
+--   Page      — Browser UI HTML/CSS/JS
 
 mod ForgeNotebookServer do
 
-import NbRunner
-import NbWs
-import NbUi
+import Runner
+import Session
 
 -- ── Public API delegation wrappers ────────────────────────────────────────────
 -- Tests (test_scroll.march) call these as ForgeNotebookServer.fn_name.
 -- import does not re-export, so we delegate explicitly.
 
-fn parse_cells(content)                 do NbCells.parse_cells(content) end
-fn cell_tag(cell)                       do NbCells.cell_tag(cell) end
-fn cell_source(cell)                    do NbCells.cell_source(cell) end
-fn generate_runner(cells, idx)          do NbRunner.generate_runner(cells, idx) end
-fn extract_cell_output(stdout, code_n)  do NbRunner.extract_cell_output(stdout, code_n) end
-fn extract_vars(stdout)                 do NbRunner.extract_vars(stdout) end
-fn extract_forge_adds(stdout)           do NbRunner.extract_forge_adds(stdout) end
+fn parse_cells(content)                 do Cells.parse_cells(content) end
+fn cell_tag(cell)                       do Cells.cell_tag(cell) end
+fn cell_source(cell)                    do Cells.cell_source(cell) end
+fn nth_cell(cells, idx)                 do Cells.nth_cell(cells, idx) end
+fn html_escape(s)                       do Cells.html_escape(s) end
+fn json_escape(s)                       do Cells.json_escape(s) end
+fn json_str(s)                          do Cells.json_str(s) end
+fn generate_runner(cells, idx)          do Runner.generate_runner(cells, idx) end
+fn generate_server_runner(src)          do Runner.generate_server_runner(src) end
+fn extract_cell_output(stdout, code_n)  do Runner.extract_cell_output(stdout, code_n) end
+fn extract_vars(stdout)                 do Runner.extract_vars(stdout) end
+fn extract_forge_adds(stdout)           do Runner.extract_forge_adds(stdout) end
+fn strip_forge_adds(output)             do Runner.strip_forge_adds(output) end
+fn find_code_idx(cells, target)         do Runner.find_code_idx(cells, target, 0, 0) end
+fn output_msg(idx, out, err_opt, vars)  do Protocol.output_msg(idx, out, err_opt, vars) end
+fn notebook_msg(content, cells)         do Protocol.notebook_msg(content, cells) end
+fn json_get_str(jv, key)                do Protocol.json_get_str(jv, key) end
+fn json_get_int(jv, key)                do Protocol.json_get_int(jv, key) end
+fn ui_html(nb_path, port)               do Page.ui_html(nb_path, port) end
+fn process_forge_adds(stdout, nb_path)  do Runner.process_forge_adds(stdout, nb_path) end
+fn read_server_log(idx)                 do Processes.read_server_log(idx) end
+fn server_is_running(idx)               do Processes.server_is_running(idx) end
+fn stop_server_proc(idx)                do Processes.stop_server_proc(idx) end
+fn stop_run_proc(idx)                   do Processes.stop_run_proc(idx) end
+fn start_run_proc(cells, idx, bin)      do Processes.start_run_proc(cells, idx, bin) end
+fn check_run_proc(idx)                  do Processes.check_run_proc(idx) end
+fn start_server_proc(src, idx, bin)     do Processes.start_server_proc(src, idx, bin) end
+
+-- ── Asset serving ─────────────────────────────────────────────────────────────
+-- Assets live under <archive_root>/assets/.  At runtime we discover the
+-- archive root from MARCH_LIB_PATH (set by forge to "<root>/lib"); if that's
+-- unavailable (running via bare `march lib/scroll.march`) we fall back to
+-- argv[1]'s parent-of-parent directory.  Final fallback is System.cwd().
+
+pfn asset_root() do
+  match System.env("MARCH_LIB_PATH") do
+    Some(s) ->
+      let first = match String.split_first(s, ":") do
+        Some((head, _)) -> head
+        None -> s
+      end
+      Path.dirname(first)
+    None ->
+      match System.argv() do
+        Cons(_, Cons(mod_path, _)) -> Path.dirname(Path.dirname(mod_path))
+        _ -> System.cwd()
+      end
+  end
+end
+
+pfn serve_asset(conn, rel_path, mime) do
+  let full = Path.join(Path.join(asset_root(), "assets"), rel_path)
+  match File.read(full) do
+    Ok(body) ->
+      conn
+      |> HttpServer.put_resp_header("content-type", mime)
+      |> HttpServer.send_resp(200, body)
+    Err(_) ->
+      conn |> HttpServer.text(404, "Not Found: " ++ rel_path)
+  end
+end
 
 -- ── HTTP router ───────────────────────────────────────────────────────────────
 
 pfn router(nb_path, display_title, port, march_bin, conn) do
   match (HttpServer.method(conn), HttpServer.path_info(conn)) do
     (:get, Nil) ->
-      conn |> HttpServer.html(200, NbUi.ui_html(display_title, port))
+      conn |> HttpServer.html(200, Page.ui_html(display_title, port))
 
     (:get, Cons("ws", Nil)) ->
       WebSocket.upgrade(conn, fn socket ->
-        NbWs.ws_loop(socket, nb_path, march_bin)
+        Session.ws_loop(socket, nb_path, march_bin)
       )
+
+    (:get, Cons("assets", Cons("css", Cons("scroll.css", Nil)))) ->
+      serve_asset(conn, "css/scroll.css", "text/css; charset=utf-8")
+
+    (:get, Cons("assets", Cons("js", Cons("scroll.js", Nil)))) ->
+      serve_asset(conn, "js/scroll.js", "application/javascript; charset=utf-8")
+
+    (:get, Cons("assets", Cons("js", Cons("editor.js", Nil)))) ->
+      serve_asset(conn, "js/editor.js", "application/javascript; charset=utf-8")
 
     _ ->
       conn |> HttpServer.text(404, "Not Found")

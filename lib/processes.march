@@ -1,4 +1,4 @@
--- nb_process.march — Background process management for code cells and server cells.
+-- processes.march — Background process management for code cells and server cells.
 --
 -- Code-cell processes run a generated NotebookRunner program, capture stdout/stderr,
 -- and signal completion via an exit-code file.  The PID is held in a Vault namespace
@@ -16,10 +16,10 @@
 --   read_server_log/1   : return current server log contents
 --   server_is_running/1 : true if the server process is still alive; cleans up vault on death
 
-mod NbProcess do
+mod Processes do
 
-import NbCells
-import NbRunner
+import Cells
+import Runner
 
 pfn trim(s) do String.trim(s) end
 
@@ -35,8 +35,8 @@ pfn run_cidx_key(idx)  do String.from_int(idx) ++ ":c" end
 
 -- Spawn a code-cell runner in the background; store PID + code-idx in Vault.
 fn start_run_proc(cells, run_through_idx, march_bin) do
-  let cidx  = NbRunner.find_code_idx(cells, run_through_idx, 0, 0)
-  let src   = NbRunner.generate_runner(cells, run_through_idx)
+  let cidx  = Runner.find_code_idx(cells, run_through_idx, 0, 0)
+  let src   = Runner.generate_runner(cells, run_through_idx)
   let tmp   = run_tmp_path(run_through_idx)
   let outp  = run_out_path(run_through_idx)
   let errp  = run_err_path(run_through_idx)
@@ -91,8 +91,8 @@ fn check_run_proc(run_through_idx) do
               end
               Some(("", Some(msg), Nil))
             else
-              let vars = NbRunner.extract_vars(out_raw)
-              Some((NbRunner.extract_cell_output(out_raw, cidx), None, vars))
+              let vars = Runner.extract_vars(out_raw)
+              Some((Runner.extract_cell_output(out_raw, cidx), None, vars))
             end
           end
       end
@@ -122,7 +122,7 @@ pfn server_ns()          do "__forge_nb_servers__" end
 fn start_server_proc(src, idx, march_bin) do
   let tmp = server_tmp_path(idx)
   let log = server_log_path(idx)
-  let runner = NbRunner.generate_server_runner(src)
+  let runner = Runner.generate_server_runner(src)
   match File.write(tmp, runner) do
     Err(msg) -> Err("failed to write server temp: " ++ msg)
     Ok(_) ->

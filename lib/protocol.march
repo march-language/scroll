@@ -1,4 +1,4 @@
--- nb_json.march — JSON building and parsing helpers for the notebook protocol.
+-- protocol.march — JSON building and parsing helpers for the notebook wire protocol.
 --
 -- Building (fn):
 --   output_msg/4    : {"type":"output", ...}
@@ -13,9 +13,9 @@
 --   vars_to_json/1  : (name, value) list → JSON object string
 --   cells_to_json/1 : List(Cell) → JSON array string
 
-mod NbJson do
+mod Protocol do
 
-import NbCells
+import Cells
 
 pfn bs(s) do String.byte_size(s) end
 

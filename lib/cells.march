@@ -1,4 +1,4 @@
--- nb_cells.march — Cell types, parsing, introspection, and string helpers.
+-- cells.march — Cell types, parsing, introspection, and string helpers.
 --
 -- Defines the Cell ADT used throughout the notebook engine and provides:
 --   - parse_cells/1   : parse .scrollmd source into a List(Cell)
@@ -9,7 +9,7 @@
 --   - json_escape/1   : escape a string for embedding in JSON
 --   - json_str/1      : wrap an escaped string in JSON double-quotes
 
-mod NbCells do
+mod Cells do
 
 -- ── String helpers ────────────────────────────────────────────────────────────
 
@@ -108,7 +108,8 @@ fn parse_cells(content) do
                     if String.is_empty(text) do cells
                     else Cons(Markdown(text), cells)
                     end
-                  let inner = String.slice(stripped, 13, bs(stripped) - 3)
+                  -- String.slice(s, start, length); drop 13-char prefix and 3-char suffix.
+                  let inner = String.slice(stripped, 13, bs(stripped) - 16)
                   let title = trim(inner)
                   go(rest, Cons(Section(title), cells_with_md), Nil, "none")
                 else

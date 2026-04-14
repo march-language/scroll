@@ -1,0 +1,98 @@
+mod Page do
+
+  -- page.march — Server-side HTML shell for the notebook browser UI.
+  --
+  -- Emits a minimal HTML skeleton that pulls in stylesheet and scripts as
+  -- separate assets.  The real content lives under assets/ in the source
+  -- tree and is served at /assets/... by the static-asset routes in
+  -- scroll.march:
+  --   /assets/css/scroll.css   — design system + cell styles
+  --   /assets/js/editor.js     — CodeMirror 6 editor module
+  --   /assets/js/scroll.js     — WebSocket client, cell rendering, keyboard
+  --
+  -- The nb_path is exposed to JS via a data-* attribute on <body>; the
+  -- WebSocket URL is derived from window.location at runtime so we don't
+  -- need to bake the port into the page.
+  --
+  -- Public API (fn):
+  --   ui_html/2 : return the full HTML page as a String
+  fn ui_html(nb_path, port) do
+    ~H"""
+        <!DOCTYPE html>
+        <html lang="en">
+        <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width,initial-scale=1">
+        <title>March Notebook — ${nb_path}</title>
+        <link rel="stylesheet" href="/assets/css/scroll.css">
+        <script type="importmap">{"imports":{"@codemirror/state":"https://esm.sh/@codemirror/state@6","@codemirror/view":"https://esm.sh/@codemirror/view@6","@codemirror/language":"https://esm.sh/@codemirror/language@6","@codemirror/commands":"https://esm.sh/@codemirror/commands@6","@lezer/highlight":"https://esm.sh/@lezer/highlight@1"}}</script>
+        <script type="module" src="/assets/js/editor.js"></script>
+        </head>
+        <body data-nb-path="${nb_path}" data-ws-port="${to_string(port)}">
+        <div id="toolbar">
+        <h1 id="nb-title">${nb_path}</h1>
+        <button class="btn btn-secondary" id="btn-add-md">+ Markdown</button>
+        <button class="btn btn-secondary" id="btn-add-code">+ Code</button>
+        <button class="btn btn-server" id="btn-add-server">+ Server</button>
+        <button class="btn btn-secondary" id="btn-add-section">+ Section</button>
+        <button class="btn btn-primary" id="btn-run-all">▶ Run All</button>
+        <button class="btn btn-secondary" id="btn-clear-all">Clear All</button>
+        <button class="btn btn-secondary" id="btn-save">Save</button>
+        <button class="btn btn-secondary" id="btn-export" title="Export notebook to HTML">Export HTML</button>
+        <button class="btn btn-secondary" id="btn-inspector" title="Toggle variable inspector">𝑥 Inspector</button>
+        <button id="theme-toggle" title="Toggle light/dark theme">☽</button>
+        <span id="mode-badge">COMMAND</span>
+        <div id="status">connecting</div>
+        </div>
+        <div id="cheatsheet">
+        <div id="cheatsheet-inner">
+            <h2>Keyboard Shortcuts</h2>
+            <h3>Command Mode (Esc to enter)</h3>
+            <table>
+            <tr><td>j / ↓</td><td>Select next cell</td></tr>
+            <tr><td>k / ↑</td><td>Select previous cell</td></tr>
+            <tr><td>Enter</td><td>Enter edit mode</td></tr>
+            <tr><td>a</td><td>Insert code cell above</td></tr>
+            <tr><td>b</td><td>Insert code cell below</td></tr>
+            <tr><td>m</td><td>Convert cell to Markdown</td></tr>
+            <tr><td>y</td><td>Convert cell to Code</td></tr>
+            <tr><td>d d</td><td>Delete cell</td></tr>
+            <tr><td>o</td><td>Toggle output collapse</td></tr>
+            <tr><td>0 0</td><td>Clear cell output</td></tr>
+            <tr><td>Shift+Enter</td><td>Run cell + select next</td></tr>
+            <tr><td>?</td><td>Show this cheatsheet</td></tr>
+            <tr><td>Esc</td><td>Exit command mode</td></tr>
+            </table>
+            <h3>Edit Mode</h3>
+            <table>
+            <tr><td>Esc</td><td>Enter command mode</td></tr>
+            <tr><td>Shift+Enter</td><td>Run + move to next</td></tr>
+            <tr><td>Cmd/Ctrl+Enter</td><td>Run cell</td></tr>
+            <tr><td>Cmd/Ctrl+S</td><td>Save notebook</td></tr>
+            <tr><td>Cmd/Ctrl+Shift+Enter</td><td>Run all cells</td></tr>
+            </table>
+            <div id="cheatsheet-close"><button class="btn btn-secondary" onclick="hideCheatsheet()">Close</button></div>
+        </div>
+        </div>
+        <div id="search-modal" style="display:none">
+        <div id="search-inner">
+            <input id="search-input" type="text" placeholder="Search cells…" autocomplete="off" />
+            <span id="search-count"></span>
+            <button class="btn btn-secondary" onclick="closeSearch()">✕</button>
+        </div>
+        </div>
+        <div id="main-layout">
+        <div id="notebook"></div>
+        <div id="inspector" class="inspector-hidden">
+        <div id="inspector-header">Variables <button onclick="toggleInspector()" title="Close">✕</button></div>
+        <div id="inspector-body"><p class="inspector-empty">Run a cell to see variables.</p></div>
+        </div>
+        </div>
+        <script src="/assets/js/scroll.js"></script>
+        </body>
+        </html>
+    """
+      |> IOList.to_string()
+  end
+
+end

@@ -1,4 +1,4 @@
--- nb_runner.march — March code generation and cell-output extraction.
+-- runner.march — March code generation and cell-output extraction.
 --
 -- Provides:
 --   generate_runner/2       : emit a self-contained NotebookRunner March program
@@ -10,9 +10,9 @@
 --   process_forge_adds/2    : run `forge add` for each sentinel and return results
 --   find_code_idx/4         : map overall cell index → code-cell index
 
-mod NbRunner do
+mod Runner do
 
-import NbCells
+import Cells
 
 -- ── Local string helpers ──────────────────────────────────────────────────────
 
