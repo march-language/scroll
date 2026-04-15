@@ -19,20 +19,20 @@ mod TestScroll do
 fn write_tmp(content, suffix) do
   let path = "/tmp/test_scroll_" ++ String.from_int(System.pid()) ++ suffix
   match File.write(path, content) do
-    Ok(_) -> path
-    Err(e) -> do
-      assert (e == "")  -- write_tmp failed; force a test failure with the error in scope
-      ""
-    end
+    Ok(_) -> Ok(path)
+    Err(e) -> Err(e)
   end
 end
 
 -- Run march on a source string; return (exit_code, stdout, stderr).
 fn run_march(march_src) do
-  let tmp = write_tmp(march_src, ".march")
-  match System.cmd("march", [tmp]) do
-    Ok(r) -> (System.exit_code(r), System.stdout(r), System.stderr(r))
-    Err(e) -> (-1, "", e)
+  match write_tmp(march_src, ".march") do
+    Err(e) -> (-1, "", "write_tmp failed: " ++ e)
+    Ok(tmp) ->
+      match System.cmd("march", [tmp]) do
+        Ok(r) -> (System.exit_code(r), System.stdout(r), System.stderr(r))
+        Err(e) -> (-1, "", e)
+      end
   end
 end
 
