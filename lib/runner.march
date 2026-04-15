@@ -403,30 +403,58 @@ fn strip_forge_adds(output) do
   String.join(filtered, "\n")
 end
 
+-- Shell-quote a string using POSIX single-quote wrapping so it is safe to
+-- interpolate into a "sh -c" command even if it contains spaces or metacharacters.
+pfn sh_quote(s) do
+  "'" ++ String.replace_all(s, "'", "'\\''") ++ "'"
+end
+
+-- Validate a forge-add spec extracted from cell stdout.
+-- Accepted format: "name[ --flag value]..." where name and values must not
+-- contain shell metacharacters.  Rejecting at this point prevents a cell
+-- that prints __FORGE_ADD__:; rm -rf ~ from executing arbitrary commands.
+pfn is_safe_spec(spec) do
+  not(String.is_empty(String.trim(spec))) &&
+  not(String.contains(spec, ";"))  &&
+  not(String.contains(spec, "|"))  &&
+  not(String.contains(spec, "&"))  &&
+  not(String.contains(spec, "$"))  &&
+  not(String.contains(spec, "`"))  &&
+  not(String.contains(spec, ">"))  &&
+  not(String.contains(spec, "<"))  &&
+  not(String.contains(spec, "\n")) &&
+  not(String.contains(spec, "\r")) &&
+  not(String.contains(spec, "\\"))
+end
+
 -- Run `forge add` for a spec string in the notebook's directory.
 -- spec can be: "name --git url", "name --path ../lib", or "name" (registry).
 -- Returns (name, ok?, message) tuple.
 fn run_forge_add(spec, nb_path) do
-  -- Find directory by stripping the last path component
-  let parts = String.split(nb_path, "/")
-  let nb_dir = if List.length(parts) > 1 do
-    String.join(List.take(parts, List.length(parts) - 1), "/")
-  else "."
-  end
-  let cmd = "cd " ++ nb_dir ++ " && forge add " ++ spec ++ " 2>&1"
-  match Process.run("sh", ["-c", cmd]) do
-    Ok(result) ->
-      let name = match String.split_first(spec, " ") do
-        Some((n, _)) -> n
-        None -> spec
-      end
-      if Process.exit_code(result) == 0 do
-        (name, true, trim(Process.stdout(result)))
-      else
-        (name, false, trim(Process.stdout(result) ++ Process.stderr(result)))
-      end
-    Err(e) ->
-      (spec, false, "failed to run forge add: " ++ to_string(e))
+  if not(is_safe_spec(spec)) do
+    (spec, false, "rejected: forge add spec contains disallowed characters")
+  else
+    -- Find directory by stripping the last path component
+    let parts = String.split(nb_path, "/")
+    let nb_dir = if List.length(parts) > 1 do
+      String.join(List.take(parts, List.length(parts) - 1), "/")
+    else "."
+    end
+    let cmd = "cd " ++ sh_quote(nb_dir) ++ " && forge add " ++ spec ++ " 2>&1"
+    match Process.run("sh", ["-c", cmd]) do
+      Ok(result) ->
+        let name = match String.split_first(spec, " ") do
+          Some((n, _)) -> n
+          None -> spec
+        end
+        if Process.exit_code(result) == 0 do
+          (name, true, trim(Process.stdout(result)))
+        else
+          (name, false, trim(Process.stdout(result) ++ Process.stderr(result)))
+        end
+      Err(e) ->
+        (spec, false, "failed to run forge add: " ++ to_string(e))
+    end
   end
 end
 

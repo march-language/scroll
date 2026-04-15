@@ -20,6 +20,11 @@ mod Processes do
 
 pfn trim(s) do String.trim(s) end
 
+-- Shell-quote a string for safe interpolation into a "sh -c" command.
+pfn sh_quote(s) do
+  "'" ++ String.replace_all(s, "'", "'\\''") ++ "'"
+end
+
 -- ── Code-cell process helpers ─────────────────────────────────────────────────
 
 pfn run_bg_ns()        do "__forge_nb_runs__" end
@@ -44,7 +49,7 @@ fn start_run_proc(cells, run_through_idx, march_bin) do
       let _ = File.write(outp, "")
       let _ = File.write(errp, "")
       let _ = File.write(exitp, "")
-      let shell = "{ " ++ march_bin ++ " " ++ tmp ++ " >" ++ outp ++ " 2>" ++ errp ++ "; echo $? >" ++ exitp ++ "; } & echo $!"
+      let shell = "{ " ++ sh_quote(march_bin) ++ " " ++ tmp ++ " >" ++ outp ++ " 2>" ++ errp ++ "; echo $? >" ++ exitp ++ "; } & echo $!"
       match Process.run("sh", ["-c", shell]) do
         Err(msg) -> Err("spawn failed: " ++ msg)
         Ok(result) ->
@@ -61,37 +66,42 @@ fn start_run_proc(cells, run_through_idx, march_bin) do
 end
 
 -- Poll a running code-cell process.
--- Returns None if still alive, Some((stdout, error_opt, vars)) when finished.
+-- Returns None if still running, Some((stdout, error_opt, vars)) when done.
+--
+-- Completion is detected by the exit-code file becoming non-empty — this is
+-- written by the shell wrapper only after the march process exits, so it is
+-- a reliable, race-free, PID-reuse-immune signal.  The previous kill -0
+-- approach was vulnerable to PID reuse (a new process inheriting the old PID
+-- would keep the cell stuck in "running" indefinitely).
 fn check_run_proc(run_through_idx) do
   match Vault.ns_get(run_bg_ns(), run_pid_key(run_through_idx)) do
     None -> Some(("", Some("no running process for this cell"), Nil))
-    Some(pid) ->
-      match Process.run("sh", ["-c", "kill -0 " ++ pid ++ " 2>/dev/null && echo alive || echo dead"]) do
-        Err(_) -> Some(("", Some("process check failed"), Nil))
-        Ok(chk) ->
-          if trim(Process.stdout(chk)) == "alive" do None
-          else
-            let _ = Vault.ns_drop(run_bg_ns(), run_pid_key(run_through_idx))
-            let cidx_s = match Vault.ns_get(run_bg_ns(), run_cidx_key(run_through_idx)) do
-              Some(s) -> s | None -> "0"
-            end
-            let _ = Vault.ns_drop(run_bg_ns(), run_cidx_key(run_through_idx))
-            let cidx = match String.to_int(cidx_s) do Ok(n) -> n | Err(_) -> 0 end
-            let out_raw  = match File.read(run_out_path(run_through_idx))  do Ok(s) -> s | Err(_) -> "" end
-            let err_raw  = match File.read(run_err_path(run_through_idx))  do Ok(s) -> s | Err(_) -> "" end
-            let exit_raw = match File.read(run_exit_path(run_through_idx)) do Ok(s) -> trim(s) | Err(_) -> "" end
-            let exit_code = match String.to_int(exit_raw) do Ok(n) -> n | Err(_) -> 0 end
-            if exit_code != 0 do
-              let msg = if String.is_empty(trim(err_raw)) do
-                "march exited with code " ++ exit_raw
-              else trim(err_raw)
-              end
-              Some(("", Some(msg), Nil))
-            else
-              let vars = Runner.extract_vars(out_raw)
-              Some((Runner.extract_cell_output(out_raw, cidx), None, vars))
-            end
+    Some(_pid) ->
+      let exit_raw = match File.read(run_exit_path(run_through_idx)) do
+        Ok(s) -> trim(s) | Err(_) -> ""
+      end
+      if String.is_empty(exit_raw) do
+        None  -- exit file still empty; process has not finished yet
+      else
+        let _ = Vault.ns_drop(run_bg_ns(), run_pid_key(run_through_idx))
+        let cidx_s = match Vault.ns_get(run_bg_ns(), run_cidx_key(run_through_idx)) do
+          Some(s) -> s | None -> "0"
+        end
+        let _ = Vault.ns_drop(run_bg_ns(), run_cidx_key(run_through_idx))
+        let cidx = match String.to_int(cidx_s) do Ok(n) -> n | Err(_) -> 0 end
+        let out_raw = match File.read(run_out_path(run_through_idx)) do Ok(s) -> s | Err(_) -> "" end
+        let err_raw = match File.read(run_err_path(run_through_idx)) do Ok(s) -> s | Err(_) -> "" end
+        let exit_code = match String.to_int(exit_raw) do Ok(n) -> n | Err(_) -> 0 end
+        if exit_code != 0 do
+          let msg = if String.is_empty(trim(err_raw)) do
+            "march exited with code " ++ exit_raw
+          else trim(err_raw)
           end
+          Some(("", Some(msg), Nil))
+        else
+          let vars = Runner.extract_vars(out_raw)
+          Some((Runner.extract_cell_output(out_raw, cidx), None, vars))
+        end
       end
   end
 end
@@ -126,7 +136,7 @@ fn start_server_proc(src, idx, march_bin) do
       -- Clear old log
       let _ = File.write(log, "")
       -- Start background: sh -c "march /tmp/... > /tmp/...log 2>&1 & echo $!"
-      let shell_cmd = march_bin ++ " " ++ tmp ++ " > " ++ log ++ " 2>&1 & echo $!"
+      let shell_cmd = sh_quote(march_bin) ++ " " ++ tmp ++ " > " ++ log ++ " 2>&1 & echo $!"
       match Process.run("sh", ["-c", shell_cmd]) do
         Err(msg) -> Err("spawn failed: " ++ msg)
         Ok(result) ->
