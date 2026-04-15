@@ -19,18 +19,42 @@ fn html_escape(s) do
   s
 end
 
+-- Issue #17: escape one control character (code point n, 0-31) as \uXXXX.
+-- Used by json_escape for the characters with no named JSON escape sequence.
+-- Char.from_int / Char.to_string let us construct the single-char search string
+-- without needing a language-level \xNN escape syntax.
+pfn esc_u(s, n) do
+  let lo   = n % 16
+  let hi   = n / 16
+  let hex  = fn d -> match d do
+    0 -> "0" | 1 -> "1" | 2 -> "2" | 3 -> "3" | 4 -> "4"
+    5 -> "5" | 6 -> "6" | 7 -> "7" | 8 -> "8" | 9 -> "9"
+    10 -> "a" | 11 -> "b" | 12 -> "c" | 13 -> "d" | 14 -> "e"
+    _ -> "f"
+  end
+  String.replace_all(s, Char.to_string(Char.from_int(n)), "\\u00" ++ hex(hi) ++ hex(lo))
+end
+
 fn json_escape(s) do
-  -- Escape backslash first so the backslashes we introduce below aren't
-  -- re-escaped. Named escapes cover the characters most likely to appear
-  -- in notebook output; other control chars (0x00-0x07, 0x0B, 0x0E-0x1F)
-  -- are rare in practice but noted as a known gap.
+  -- Escape backslash FIRST so the backslashes introduced below aren't re-escaped.
   let s = String.replace_all(s, "\\", "\\\\")
   let s = String.replace_all(s, "\"", "\\\"")
+  -- Named JSON escapes for the most common control characters.
   let s = String.replace_all(s, "\n", "\\n")
   let s = String.replace_all(s, "\r", "\\r")
   let s = String.replace_all(s, "\t", "\\t")
   let s = String.replace_all(s, "\b", "\\b")
   let s = String.replace_all(s, "\f", "\\f")
+  -- Issue #17: \uXXXX escapes for the remaining control chars (0x00-0x07,
+  -- 0x0B, 0x0E-0x1F) that have no named JSON escape sequence.
+  let s = esc_u(s, 0)   let s = esc_u(s, 1)   let s = esc_u(s, 2)   let s = esc_u(s, 3)
+  let s = esc_u(s, 4)   let s = esc_u(s, 5)   let s = esc_u(s, 6)   let s = esc_u(s, 7)
+  let s = esc_u(s, 11)  -- VT (0x0B); 0x08-0x0A already handled above
+  let s = esc_u(s, 14)  let s = esc_u(s, 15)  -- 0x0C-0x0D handled above
+  let s = esc_u(s, 16)  let s = esc_u(s, 17)  let s = esc_u(s, 18)  let s = esc_u(s, 19)
+  let s = esc_u(s, 20)  let s = esc_u(s, 21)  let s = esc_u(s, 22)  let s = esc_u(s, 23)
+  let s = esc_u(s, 24)  let s = esc_u(s, 25)  let s = esc_u(s, 26)  let s = esc_u(s, 27)
+  let s = esc_u(s, 28)  let s = esc_u(s, 29)  let s = esc_u(s, 30)  let s = esc_u(s, 31)
   s
 end
 
