@@ -20,8 +20,18 @@ pfn trim(s) do String.trim(s) end
 
 -- ── Sentinel markers ─────────────────────────────────────────────────────────
 
+-- Plain markers (legacy / fallback).
 pfn cell_start_marker(n) do "__MNB_START_" ++ String.from_int(n) ++ "__" end
 pfn cell_end_marker(n)   do "__MNB_END_"   ++ String.from_int(n) ++ "__" end
+
+-- Issue #5: token-based markers.  The token is derived from PID + run-index so
+-- a cell that accidentally prints the plain marker string won't corrupt
+-- extraction.  The session token line is the first thing printed by main().
+pfn cell_start_marker_t(n, tok) do "__MNB_S_" ++ tok ++ "_" ++ String.from_int(n) ++ "__" end
+pfn cell_end_marker_t(n, tok)   do "__MNB_E_" ++ tok ++ "_" ++ String.from_int(n) ++ "__" end
+pfn session_tok_line(tok)       do "__MNB_TOK_" ++ tok end
+pfn vars_start_t(tok)           do "__MNB_VARS_" ++ tok ++ "__" end
+pfn vars_end_t(tok)             do "__MNB_VARS_END_" ++ tok ++ "__" end
 
 -- ── Runner generation ─────────────────────────────────────────────────────────
 
@@ -71,6 +81,31 @@ fn generate_runner(cells, run_through_idx) do
     let b = count_in(line, ")") + count_in(line, "]")
     let e = if t == "end" do 1 else 0 end
     b + e
+  end
+
+  -- Issue #7: guard is_cont against lines that contain closing brackets inside
+  -- string literals.  A line like `let s = "closing: )))"` has zero openers
+  -- and three closers, but is NOT a multi-line continuation — the brackets are
+  -- inside a string.  Only genuine closer lines (e.g. `])`, `))`, `end`) should
+  -- trigger the backward scan.
+  -- Returns true iff the trimmed line contains only `)`, `]`, whitespace, and
+  -- optionally the keyword `end`.
+  fn is_closer_only(line) do
+    fn go(s) do
+      if String.is_empty(s) do true
+      else
+        let c = String.slice(s, 0, 1)
+        let rest = String.slice(s, 1, bs(s) - 1)
+        if c == ")" || c == "]" || c == " " || c == "\t" do go(rest)
+        else
+          if String.starts_with(s, "end") do
+            go(String.slice(s, 3, bs(s) - 3))
+          else false
+          end
+        end
+      end
+    end
+    go(trim(line))
   end
 
   -- Split lines into (preamble_lines, last_stmt_lines).
@@ -123,8 +158,9 @@ fn generate_runner(cells, run_through_idx) do
         let opens  = line_openers(last_line)
         let closes = line_closers(last_line)
         -- A continuation line has closers and no openers of its own
-        -- (e.g. `])`, `))`, standalone `end`)
-        let is_cont = opens == 0 && closes > 0
+        -- (e.g. `])`, `))`, standalone `end`) AND only contains bracket/end tokens
+        -- (guards against string literals that happen to contain closing brackets).
+        let is_cont = opens == 0 && closes > 0 && is_closer_only(last_line)
         if is_cont do
           -- Multi-line statement: scan backward until we find the opener(s).
           find_start(rev_rest, closes, Cons(last_line, Nil))
@@ -164,6 +200,12 @@ fn generate_runner(cells, run_through_idx) do
       None
     end
   end
+
+  -- Issue #5: per-run token embedded in all sentinel markers.
+  -- Derived from PID + run_through_idx so it changes each time the server
+  -- restarts and for each cell index — making accidental sentinel collision
+  -- essentially impossible without knowing the PID in advance.
+  let tok = String.from_int(System.pid()) ++ "_" ++ String.from_int(run_through_idx)
 
   -- Emit one cell inline into main() so bindings accumulate across cells.
   --
@@ -217,13 +259,13 @@ fn generate_runner(cells, run_through_idx) do
                 end
             end
           end
-        "  println(\"" ++ cell_start_marker(n) ++ "\")\n" ++
+        "  println(\"" ++ cell_start_marker_t(n, tok) ++ "\")\n" ++
         pre_str ++
         binding_str ++
         "  let " ++ rvar ++ " = " ++ result_expr ++ "\n" ++
         "  let " ++ svar ++ " = to_string(" ++ rvar ++ ")\n" ++
         "  if " ++ svar ++ " != \"()\" do println(" ++ svar ++ ") else () end\n" ++
-        "  println(\"" ++ cell_end_marker(n) ++ "\")\n"
+        "  println(\"" ++ cell_end_marker_t(n, tok) ++ "\")\n"
     end
   end
 
@@ -253,10 +295,10 @@ fn generate_runner(cells, run_through_idx) do
     let svar = "__s" ++ ns ++ "__"
     let mod_code  = String.join(cell_lines(src), "\n") ++ "\n\n"
     let main_code =
-      "  println(\"" ++ cell_start_marker(n) ++ "\")\n" ++
+      "  println(\"" ++ cell_start_marker_t(n, tok) ++ "\")\n" ++
       "  let " ++ rvar ++ " = ()\n" ++
       "  let " ++ svar ++ " = to_string(" ++ rvar ++ ")\n" ++
-      "  println(\"" ++ cell_end_marker(n) ++ "\")\n"
+      "  println(\"" ++ cell_end_marker_t(n, tok) ++ "\")\n"
     let pair = (mod_code, main_code)
     pair
   end
@@ -308,14 +350,18 @@ fn generate_runner(cells, run_through_idx) do
   -- Emit a vars block: println each bound name and its to_string value.
   -- The server extracts this to populate the variable inspector.
   fn vars_block(names) do
-    if List.is_empty(names) do ""
+    -- Issue #18: guard against names containing '=' which would corrupt the
+    -- name=value extraction protocol (shouldn't happen for valid March identifiers
+    -- but let_bound_name could theoretically return an unusual string).
+    let safe_names = List.filter(names, fn n -> not(String.contains(n, "=")))
+    if List.is_empty(safe_names) do ""
     else
-      let lines = List.map(names, fn name ->
+      let lines = List.map(safe_names, fn name ->
         "  println(\"" ++ name ++ "=\" ++ to_string(" ++ name ++ "))\n"
       )
-      "  println(\"__MNB_VARS__\")\n" ++
+      "  println(\"" ++ vars_start_t(tok) ++ "\")\n" ++
       String.join(lines, "") ++
-      "  println(\"__MNB_VARS_END__\")\n"
+      "  println(\"" ++ vars_end_t(tok) ++ "\")\n"
     end
   end
 
@@ -327,7 +373,12 @@ fn generate_runner(cells, run_through_idx) do
   -- Module cells are nested inside NotebookRunner so qualified names like
   -- Greet.hello resolve correctly from main(). Nested mod declarations are
   -- valid March (mod_decl is part of decl_list_r used recursively).
-  "mod NotebookRunner do\n\n" ++ mod_str ++ "fn main() do\n" ++ body ++ "end\n\nend\n"
+  -- The session token is printed first so extract_cell_output / extract_vars
+  -- can discover it and use the collision-resistant token-based markers.
+  "mod NotebookRunner do\n\n" ++ mod_str ++
+  "fn main() do\n" ++
+  "  println(\"" ++ session_tok_line(tok) ++ "\")\n" ++
+  body ++ "end\n\nend\n"
 end
 
 -- Generate a standalone runner for a server cell (wraps source in mod+main).
@@ -345,36 +396,66 @@ end
 
 -- ── Output extraction ─────────────────────────────────────────────────────────
 
+-- Extract per-run token from the session marker line that generate_runner emits
+-- as the first println in main().  Returns "" when absent (legacy runner).
+pfn extract_run_tok(stdout) do
+  let prefix = "__MNB_TOK_"
+  match String.split_first(stdout, prefix) do
+    None -> ""
+    Some((before, after)) ->
+      -- Only valid when the prefix is at the very start of a line.
+      if not(String.is_empty(before)) && not(String.ends_with(before, "\n")) do ""
+      else
+        match String.split_first(after, "\n") do
+          None    -> after
+          Some((tok_val, _)) -> tok_val
+        end
+      end
+  end
+end
+
 fn extract_cell_output(stdout, code_n) do
-  let start_marker = cell_start_marker(code_n)
-  let end_marker   = cell_end_marker(code_n)
+  let tok = extract_run_tok(stdout)
+  let start_marker =
+    if String.is_empty(tok) do cell_start_marker(code_n)
+    else cell_start_marker_t(code_n, tok)
+    end
+  let end_marker =
+    if String.is_empty(tok) do cell_end_marker(code_n)
+    else cell_end_marker_t(code_n, tok)
+    end
   match String.split_first(stdout, start_marker) do
     None -> ""
     Some((_, after_start)) ->
-      let after_start =
-        if sw(after_start, "\n") do
-          String.slice(after_start, 1, bs(after_start) - 1)
-        else after_start
-        end
-      match String.split_first(after_start, end_marker) do
+      -- Issue #11: search for "\n" ++ end_marker so the protocol newline
+      -- (emitted by the runner's println) is consumed by the split rather than
+      -- stripped as post-processing.  This correctly preserves a cell's own
+      -- trailing "\n" (e.g. println("x\n") keeps its blank-line intent) while
+      -- the protocol newline is not leaked into the output.
+      let end_with_nl = "\n" ++ end_marker
+      match String.split_first(after_start, end_with_nl) do
         None -> trim(after_start)
         Some((between, _)) ->
-          let s = between
-          if String.ends_with(s, "\n") do
-            String.slice(s, 0, bs(s) - 1)
-          else s
+          -- between starts with "\n" (the protocol newline after start_marker).
+          -- Strip it to get the actual cell output.
+          if sw(between, "\n") do
+            String.slice(between, 1, bs(between) - 1)
+          else between
           end
       end
   end
 end
 
--- Extract variable bindings from the __MNB_VARS__ block in stdout.
+-- Extract variable bindings from the vars block in stdout.
 -- Returns a list of (name, value) string pairs.
 fn extract_vars(stdout) do
-  match String.split_first(stdout, "__MNB_VARS__\n") do
+  let tok = extract_run_tok(stdout)
+  let v_start = if String.is_empty(tok) do "__MNB_VARS__\n"            else vars_start_t(tok) ++ "\n" end
+  let v_end   = if String.is_empty(tok) do "\n__MNB_VARS_END__" else "\n" ++ vars_end_t(tok)   end
+  match String.split_first(stdout, v_start) do
     None -> Nil
     Some((_, after)) ->
-      match String.split_first(after, "\n__MNB_VARS_END__") do
+      match String.split_first(after, v_end) do
         None -> Nil
         Some((block, _)) ->
           let lines = List.filter(String.split(block, "\n"), fn l -> not(String.is_empty(l)))
@@ -397,6 +478,12 @@ fn extract_forge_adds(stdout) do
 end
 
 -- Remove __FORGE_ADD__:... lines from cell output so they don't appear to the user.
+-- Note (#15): removing a sentinel that appears between two content lines merges
+-- those lines with a single "\n" — the same as if the sentinel was never there.
+-- If blank lines surrounded the sentinel (e.g. "\n\n__FORGE_ADD__:x\n\n"), those
+-- blank lines are preserved unchanged.  Line-count shifts only occur when the
+-- sentinel itself was the only content between two content lines, which is the
+-- intended common case (no shift visible to the user).
 fn strip_forge_adds(output) do
   let lines = String.split(output, "\n")
   let filtered = List.filter(lines, fn line -> not(String.starts_with(line, "__FORGE_ADD__:")))
