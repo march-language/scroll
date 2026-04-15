@@ -38,6 +38,12 @@ pfn run_cidx_key(idx)  do String.from_int(idx) ++ ":c" end
 -- Spawn a code-cell runner in the background; store PID + code-idx in Vault.
 fn start_run_proc(cells, run_through_idx, march_bin) do
   let cidx  = Runner.find_code_idx(cells, run_through_idx, 0, 0)
+  -- Issue #4: find_code_idx returns -1 when run_through_idx points at a non-code
+  -- cell and no code cell precedes it.  Running in that case would produce silent
+  -- empty output, which is confusing.  Return an error instead.
+  if cidx < 0 do
+    Err("no code cell at or before index " ++ String.from_int(run_through_idx))
+  else
   let src   = Runner.generate_runner(cells, run_through_idx)
   let tmp   = run_tmp_path(run_through_idx)
   let outp  = run_out_path(run_through_idx)
@@ -63,6 +69,7 @@ fn start_run_proc(cells, run_through_idx, march_bin) do
           end
       end
   end
+  end  -- end cidx < 0 guard
 end
 
 -- Poll a running code-cell process.
@@ -91,6 +98,13 @@ fn check_run_proc(run_through_idx) do
         let cidx = match String.to_int(cidx_s) do Ok(n) -> n | Err(_) -> 0 end
         let out_raw = match File.read(run_out_path(run_through_idx)) do Ok(s) -> s | Err(_) -> "" end
         let err_raw = match File.read(run_err_path(run_through_idx)) do Ok(s) -> s | Err(_) -> "" end
+        -- Issue #9: cap output at 64 KB to prevent a runaway cell from exhausting
+        -- server memory and stalling the event loop.
+        let out_raw =
+          if String.byte_size(out_raw) > 65536 do
+            String.slice(out_raw, 0, 65536) ++ "\n[output truncated at 64 KB]"
+          else out_raw
+          end
         let exit_code = match String.to_int(exit_raw) do Ok(n) -> n | Err(_) -> 0 end
         if exit_code != 0 do
           let msg = if String.is_empty(trim(err_raw)) do
@@ -100,7 +114,17 @@ fn check_run_proc(run_through_idx) do
           Some(("", Some(msg), Nil))
         else
           let vars = Runner.extract_vars(out_raw)
-          Some((Runner.extract_cell_output(out_raw, cidx), None, vars))
+          let cell_out = Runner.extract_cell_output(out_raw, cidx)
+          -- Issue #10: include stderr (warnings, diagnostics) even on exit code 0.
+          -- Show it appended to cell output so the user sees it without confusing
+          -- it with a hard error.
+          let combined_out =
+            if String.is_empty(trim(err_raw)) do cell_out
+            else
+              let sep = if String.is_empty(cell_out) do "" else "\n" end
+              cell_out ++ sep ++ "[stderr]\n" ++ trim(err_raw)
+            end
+          Some((combined_out, None, vars))
         end
       end
   end
