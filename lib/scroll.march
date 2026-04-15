@@ -14,9 +14,6 @@
 
 mod Scroll do
 
-import Runner
-import Session
-
 -- ── Public API delegation wrappers ────────────────────────────────────────────
 -- Tests (test_scroll.march) call these as Scroll.fn_name.
 -- import does not re-export, so we delegate explicitly.
@@ -55,7 +52,7 @@ fn start_server_proc(src, idx, bin)     do Processes.start_server_proc(src, idx,
 -- unavailable (running via bare `march lib/scroll.march`) we fall back to
 -- argv[1]'s parent-of-parent directory.  Final fallback is System.cwd().
 
-pfn asset_root() do
+fn asset_root() do
   match System.env("MARCH_LIB_PATH") do
     Some(s) ->
       let first = match String.split_first(s, ":") do
@@ -71,7 +68,7 @@ pfn asset_root() do
   end
 end
 
-pfn serve_asset(conn, rel_path, mime) do
+fn serve_asset(conn, rel_path, mime) do
   let full = Path.join(Path.join(asset_root(), "assets"), rel_path)
   match File.read(full) do
     Ok(body) ->
@@ -85,7 +82,7 @@ end
 
 -- ── HTTP router ───────────────────────────────────────────────────────────────
 
-pfn router(nb_path, display_title, port, march_bin, conn) do
+fn router(nb_path, display_title, port, march_bin, conn) do
   match (HttpServer.method(conn), HttpServer.path_info(conn)) do
     (:get, Nil) ->
       conn |> HttpServer.html(200, Page.ui_html(display_title, port))

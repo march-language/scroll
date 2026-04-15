@@ -18,8 +18,6 @@
 
 mod Processes do
 
-import Cells
-import Runner
 
 pfn trim(s) do String.trim(s) end
 

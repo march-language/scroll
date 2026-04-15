@@ -47,7 +47,7 @@ end
 -- when cell_obj was an inner `fn` closure passed to List.map with 2+ cells,
 -- Perceus mismanaged its RC on the second call.  Module-level pfns don't
 -- carry a heap-allocated closure environment, so the RC issue doesn't apply.
-pfn cell_to_json_obj(cell) do
+fn cell_to_json_obj(cell) do
   match cell do
     Markdown(s)   -> "{\"kind\":\"markdown\",\"source\":" ++ json_str(s) ++ "}"
     Code(s)       -> "{\"kind\":\"code\",\"source\":" ++ json_str(s) ++ "}"
