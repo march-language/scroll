@@ -8,10 +8,11 @@
 --   json_get_str/2  : extract a JSON string field from a parsed Json value
 --   json_get_int/2  : extract a JSON integer field from a parsed Json value
 --
--- Internal helpers (pfn):
+-- Internal helpers (pfn/fn):
 --   json_opt_str/1  : "null" or json_str(s)
 --   vars_to_json/1  : (name, value) list → JSON object string
 --   cells_to_json/1 : List(Cell) → JSON array string
+--   unescape_json/1 : single-pass JSON string unescape
 
 mod Protocol do
 
@@ -67,19 +68,46 @@ end
 
 -- ── JSON parsing helpers ──────────────────────────────────────────────────────
 
+-- Single-pass JSON string unescape.
+-- Sequential replace_all is order-dependent and corrupts sequences like
+-- `\\"` (backslash + quote): replacing `\"` before `\\` consumes the quote
+-- and leaves a dangling backslash.  Processing left-to-right in one pass
+-- avoids this entirely.
+fn unescape_json(s) do
+  fn go(rem, acc) do
+    match String.split_first(rem, "\\") do
+      None -> acc ++ rem
+      Some((before, after)) ->
+        if String.is_empty(after) do
+          acc ++ before ++ "\\"  -- trailing backslash (malformed); preserve
+        else
+          let esc  = String.slice(after, 0, 1)
+          let rest = String.slice(after, 1, bs(after) - 1)
+          let ch = match esc do
+            "\\" -> "\\"
+            "\"" -> "\""
+            "n"  -> "\n"
+            "r"  -> "\r"
+            "t"  -> "\t"
+            "b"  -> "\b"
+            "f"  -> "\f"
+            "/"  -> "/"
+            _    -> "\\" ++ esc   -- unknown / \uXXXX: preserve as-is
+          end
+          go(rest, acc ++ before ++ ch)
+        end
+      end
+  end
+  go(s, "")
+end
+
 fn json_get_str(jv, key) do
   match Json.get(jv, key) do
     None -> None
     Some(v) ->
       let s = Json.to_string(v)
       if bs(s) >= 2 && String.slice(s, 0, 1) == "\"" do
-        let inner = String.slice(s, 1, bs(s) - 2)
-        let inner = String.replace_all(inner, "\\n", "\n")
-        let inner = String.replace_all(inner, "\\t", "\t")
-        let inner = String.replace_all(inner, "\\r", "\r")
-        let inner = String.replace_all(inner, "\\\"", "\"")
-        let inner = String.replace_all(inner, "\\\\", "\\")
-        Some(inner)
+        Some(unescape_json(String.slice(s, 1, bs(s) - 2)))
       else None
       end
   end

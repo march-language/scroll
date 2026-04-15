@@ -20,11 +20,17 @@ fn html_escape(s) do
 end
 
 fn json_escape(s) do
+  -- Escape backslash first so the backslashes we introduce below aren't
+  -- re-escaped. Named escapes cover the characters most likely to appear
+  -- in notebook output; other control chars (0x00-0x07, 0x0B, 0x0E-0x1F)
+  -- are rare in practice but noted as a known gap.
   let s = String.replace_all(s, "\\", "\\\\")
   let s = String.replace_all(s, "\"", "\\\"")
   let s = String.replace_all(s, "\n", "\\n")
   let s = String.replace_all(s, "\r", "\\r")
   let s = String.replace_all(s, "\t", "\\t")
+  let s = String.replace_all(s, "\b", "\\b")
+  let s = String.replace_all(s, "\f", "\\f")
   s
 end
 
@@ -102,9 +108,16 @@ fn parse_cells(content) do
                     if String.is_empty(text) do cells
                     else Cons(Markdown(text), cells)
                     end
-                  -- String.slice(s, start, length); drop 13-char prefix and 3-char suffix.
-                  let inner = String.slice(stripped, 13, String.byte_size(stripped) - 16)
-                  let title = String.trim(inner)
+                  -- "<!-- section:" is 13 bytes; " -->" is 4 bytes (including the
+                  -- space before -->) plus we keep trailing "-->" = 3 bytes suffix.
+                  -- Total overhead = 13 + 3 = 16.  Guard against malformed comments
+                  -- like "<!-- section:-->" (exactly 16 bytes) that would produce a
+                  -- zero-length or negative slice.
+                  let title =
+                    if String.byte_size(stripped) > 16 do
+                      String.trim(String.slice(stripped, 13, String.byte_size(stripped) - 16))
+                    else ""
+                    end
                   go(rest, Cons(Section(title), cells_with_md), Nil, "none")
                 else
                   go(rest, cells, Cons(line, buf), "none")
