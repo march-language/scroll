@@ -36,8 +36,8 @@ end
 -- Parse notebook content, generate runner through nb_idx, execute,
 -- and return (exit_code, raw_stdout).
 pfn run_nb(nb_content, nb_idx) do
-  let cells = ForgeNotebookServer.parse_cells(nb_content)
-  let runner = ForgeNotebookServer.generate_runner(cells, nb_idx)
+  let cells = Scroll.parse_cells(nb_content)
+  let runner = Scroll.generate_runner(cells, nb_idx)
   let (rc, stdout, _) = run_march(runner)
   (rc, stdout)
 end
@@ -47,77 +47,77 @@ end
 describe "parse_cells" do
 
   test "empty string yields no cells" do
-    let cells = ForgeNotebookServer.parse_cells("")
+    let cells = Scroll.parse_cells("")
     assert (List.length(cells) == 0)
   end
 
   test "plain text yields one Markdown cell" do
-    let cells = ForgeNotebookServer.parse_cells("Hello, world!")
+    let cells = Scroll.parse_cells("Hello, world!")
     assert (List.length(cells) == 1)
     match cells do
-      Cons(cell, Nil) -> assert (ForgeNotebookServer.cell_tag(cell) == "Markdown")
+      Cons(cell, Nil) -> assert (Scroll.cell_tag(cell) == "Markdown")
       _ -> assert false
     end
   end
 
   test "a code fence yields one Code cell" do
     let src = "```march\nprintln(\"hi\")\n```"
-    let cells = ForgeNotebookServer.parse_cells(src)
+    let cells = Scroll.parse_cells(src)
     assert (List.length(cells) == 1)
     match cells do
-      Cons(cell, Nil) -> assert (ForgeNotebookServer.cell_tag(cell) == "Code")
+      Cons(cell, Nil) -> assert (Scroll.cell_tag(cell) == "Code")
       _ -> assert false
     end
   end
 
   test "code cell contains correct source" do
     let src = "```march\n1 + 1\n```"
-    let cells = ForgeNotebookServer.parse_cells(src)
+    let cells = Scroll.parse_cells(src)
     match cells do
       Cons(cell, Nil) ->
-        assert (String.trim(ForgeNotebookServer.cell_source(cell)) == "1 + 1")
+        assert (String.trim(Scroll.cell_source(cell)) == "1 + 1")
       _ -> assert false
     end
   end
 
   test "server fence yields ServerCell" do
     let src = "```march:server\nHttpServer.start(3000)\n```"
-    let cells = ForgeNotebookServer.parse_cells(src)
+    let cells = Scroll.parse_cells(src)
     assert (List.length(cells) == 1)
     match cells do
-      Cons(cell, Nil) -> assert (ForgeNotebookServer.cell_tag(cell) == "ServerCell")
+      Cons(cell, Nil) -> assert (Scroll.cell_tag(cell) == "ServerCell")
       _ -> assert false
     end
   end
 
   test "markdown before code fence is kept" do
     let src = "# Title\n\n```march\n42\n```"
-    let cells = ForgeNotebookServer.parse_cells(src)
+    let cells = Scroll.parse_cells(src)
     assert (List.length(cells) == 2)
-    let tags = List.map(cells, fn c -> ForgeNotebookServer.cell_tag(c))
+    let tags = List.map(cells, fn c -> Scroll.cell_tag(c))
     assert (List.nth(tags, 0) == "Markdown")
     assert (List.nth(tags, 1) == "Code")
   end
 
   test "multiple code cells parsed in order" do
     let src = "```march\n1\n```\n\n```march\n2\n```\n\n```march\n3\n```"
-    let cells = ForgeNotebookServer.parse_cells(src)
+    let cells = Scroll.parse_cells(src)
     assert (List.length(cells) == 3)
-    let all_code = List.all(cells, fn c -> ForgeNotebookServer.cell_tag(c) == "Code")
+    let all_code = List.all(cells, fn c -> Scroll.cell_tag(c) == "Code")
     assert all_code
   end
 
   test "whitespace-only text between fences is not a cell" do
     let src = "```march\n1\n```\n\n\n```march\n2\n```"
-    let cells = ForgeNotebookServer.parse_cells(src)
+    let cells = Scroll.parse_cells(src)
     assert (List.length(cells) == 2)
   end
 
   test "mixed notebook: markdown, code, markdown, code" do
     let src = "# Intro\n\n```march\n1\n```\n\nSome text.\n\n```march\n2\n```"
-    let cells = ForgeNotebookServer.parse_cells(src)
+    let cells = Scroll.parse_cells(src)
     assert (List.length(cells) == 4)
-    let tags = List.map(cells, fn c -> ForgeNotebookServer.cell_tag(c))
+    let tags = List.map(cells, fn c -> Scroll.cell_tag(c))
     assert (List.nth(tags, 0) == "Markdown")
     assert (List.nth(tags, 1) == "Code")
     assert (List.nth(tags, 2) == "Markdown")
@@ -126,10 +126,10 @@ describe "parse_cells" do
 
   test "server cell source is preserved" do
     let src = "```march:server\nfoo()\nbar()\n```"
-    let cells = ForgeNotebookServer.parse_cells(src)
+    let cells = Scroll.parse_cells(src)
     match cells do
       Cons(cell, Nil) ->
-        let s = ForgeNotebookServer.cell_source(cell)
+        let s = Scroll.cell_source(cell)
         assert (String.contains(s, "foo()"))
         assert (String.contains(s, "bar()"))
       _ -> assert false
@@ -144,19 +144,19 @@ describe "extract_cell_output" do
 
   test "extracts content between sentinel markers" do
     let stdout = "__MNB_START_0__\nhello\n__MNB_END_0__\n"
-    let out = ForgeNotebookServer.extract_cell_output(stdout, 0)
+    let out = Scroll.extract_cell_output(stdout, 0)
     assert (out == "hello")
   end
 
   test "returns empty string when start marker missing" do
     let stdout = "no markers here"
-    let out = ForgeNotebookServer.extract_cell_output(stdout, 0)
+    let out = Scroll.extract_cell_output(stdout, 0)
     assert (out == "")
   end
 
   test "handles multi-line output" do
     let stdout = "__MNB_START_1__\nline1\nline2\nline3\n__MNB_END_1__\n"
-    let out = ForgeNotebookServer.extract_cell_output(stdout, 1)
+    let out = Scroll.extract_cell_output(stdout, 1)
     assert (out == "line1\nline2\nline3")
   end
 
@@ -164,27 +164,27 @@ describe "extract_cell_output" do
     let stdout =
       "__MNB_START_0__\ncell0\n__MNB_END_0__\n" ++
       "__MNB_START_1__\ncell1\n__MNB_END_1__\n"
-    let out0 = ForgeNotebookServer.extract_cell_output(stdout, 0)
-    let out1 = ForgeNotebookServer.extract_cell_output(stdout, 1)
+    let out0 = Scroll.extract_cell_output(stdout, 0)
+    let out1 = Scroll.extract_cell_output(stdout, 1)
     assert (out0 == "cell0")
     assert (out1 == "cell1")
   end
 
   test "empty cell body yields empty string" do
     let stdout = "__MNB_START_0__\n__MNB_END_0__\n"
-    let out = ForgeNotebookServer.extract_cell_output(stdout, 0)
+    let out = Scroll.extract_cell_output(stdout, 0)
     assert (out == "")
   end
 
   test "works for higher cell indices" do
     let stdout = "__MNB_START_42__\nvalue42\n__MNB_END_42__\n"
-    let out = ForgeNotebookServer.extract_cell_output(stdout, 42)
+    let out = Scroll.extract_cell_output(stdout, 42)
     assert (out == "value42")
   end
 
   test "ignores content after end marker" do
     let stdout = "__MNB_START_0__\nresult\n__MNB_END_0__\nextra stuff\n"
-    let out = ForgeNotebookServer.extract_cell_output(stdout, 0)
+    let out = Scroll.extract_cell_output(stdout, 0)
     assert (out == "result")
   end
 
@@ -196,26 +196,26 @@ describe "extract_forge_adds" do
 
   test "extracts forge add spec from sentinel line" do
     let stdout = "__FORGE_ADD__:json --git https://github.com/march-lang/json\n"
-    let adds = ForgeNotebookServer.extract_forge_adds(stdout)
+    let adds = Scroll.extract_forge_adds(stdout)
     assert (List.length(adds) == 1)
     assert (List.nth(adds, 0) == "json --git https://github.com/march-lang/json")
   end
 
   test "returns empty list when no sentinels present" do
     let stdout = "hello world\nno adds here\n"
-    let adds = ForgeNotebookServer.extract_forge_adds(stdout)
+    let adds = Scroll.extract_forge_adds(stdout)
     assert (List.length(adds) == 0)
   end
 
   test "extracts multiple forge adds" do
     let stdout = "__FORGE_ADD__:json --git url1\n__FORGE_ADD__:utils --path ../utils\n"
-    let adds = ForgeNotebookServer.extract_forge_adds(stdout)
+    let adds = Scroll.extract_forge_adds(stdout)
     assert (List.length(adds) == 2)
   end
 
   test "ignores non-sentinel lines mixed in" do
     let stdout = "hello\n__FORGE_ADD__:json\nworld\n"
-    let adds = ForgeNotebookServer.extract_forge_adds(stdout)
+    let adds = Scroll.extract_forge_adds(stdout)
     assert (List.length(adds) == 1)
     assert (List.nth(adds, 0) == "json")
   end
@@ -227,51 +227,51 @@ end
 describe "generate_runner" do
 
   test "wraps output in NotebookRunner mod" do
-    let cells = ForgeNotebookServer.parse_cells("```march\n1 + 1\n```")
-    let runner = ForgeNotebookServer.generate_runner(cells, 0)
+    let cells = Scroll.parse_cells("```march\n1 + 1\n```")
+    let runner = Scroll.generate_runner(cells, 0)
     assert (String.contains(runner, "mod NotebookRunner"))
   end
 
   test "includes start and end markers for cell 0" do
-    let cells = ForgeNotebookServer.parse_cells("```march\n1 + 1\n```")
-    let runner = ForgeNotebookServer.generate_runner(cells, 0)
+    let cells = Scroll.parse_cells("```march\n1 + 1\n```")
+    let runner = Scroll.generate_runner(cells, 0)
     assert (String.contains(runner, "__MNB_START_0__"))
     assert (String.contains(runner, "__MNB_END_0__"))
   end
 
   test "skips Markdown cells in sentinel numbering" do
     -- Markdown + one Code → only cell 0 sentinels in runner
-    let cells = ForgeNotebookServer.parse_cells("# Title\n\n```march\n42\n```")
-    let runner = ForgeNotebookServer.generate_runner(cells, 1)
+    let cells = Scroll.parse_cells("# Title\n\n```march\n42\n```")
+    let runner = Scroll.generate_runner(cells, 1)
     assert (String.contains(runner, "__MNB_START_0__"))
     assert not(String.contains(runner, "__MNB_START_1__"))
   end
 
   test "runs only up to run_through_idx" do
     let nb = "```march\n1\n```\n\n```march\n2\n```\n\n```march\n3\n```"
-    let cells = ForgeNotebookServer.parse_cells(nb)
-    let runner = ForgeNotebookServer.generate_runner(cells, 1)
+    let cells = Scroll.parse_cells(nb)
+    let runner = Scroll.generate_runner(cells, 1)
     assert (String.contains(runner, "__MNB_START_0__"))
     assert (String.contains(runner, "__MNB_START_1__"))
     assert not(String.contains(runner, "__MNB_START_2__"))
   end
 
   test "let binding is suppressed (Jupyter convention)" do
-    let cells = ForgeNotebookServer.parse_cells("```march\nlet x = 42\n```")
-    let runner = ForgeNotebookServer.generate_runner(cells, 0)
+    let cells = Scroll.parse_cells("```march\nlet x = 42\n```")
+    let runner = Scroll.generate_runner(cells, 0)
     -- The captured result variable must be "()" for let-bindings
     assert (String.contains(runner, "let __r0__ = ()"))
   end
 
   test "expression result is captured" do
-    let cells = ForgeNotebookServer.parse_cells("```march\n1 + 1\n```")
-    let runner = ForgeNotebookServer.generate_runner(cells, 0)
+    let cells = Scroll.parse_cells("```march\n1 + 1\n```")
+    let runner = Scroll.generate_runner(cells, 0)
     assert (String.contains(runner, "let __r0__ = 1 + 1"))
   end
 
   test "output of generate_runner is valid march source" do
-    let cells = ForgeNotebookServer.parse_cells("```march\nprintln(\"ok\")\n```")
-    let runner = ForgeNotebookServer.generate_runner(cells, 0)
+    let cells = Scroll.parse_cells("```march\nprintln(\"ok\")\n```")
+    let runner = Scroll.generate_runner(cells, 0)
     let (rc, _, _) = run_march(runner)
     assert (rc == 0)
   end
@@ -285,38 +285,38 @@ describe "integration" do
   test "single expression cell prints result" do
     let (rc, stdout) = run_nb("```march\n1 + 1\n```", 0)
     assert (rc == 0)
-    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "2")
+    assert (Scroll.extract_cell_output(stdout, 0) == "2")
   end
 
   test "println output is captured" do
     let (rc, stdout) = run_nb("```march\nprintln(\"hello scroll\")\n```", 0)
     assert (rc == 0)
-    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "hello scroll")
+    assert (Scroll.extract_cell_output(stdout, 0) == "hello scroll")
   end
 
   test "let binding is silent (no auto-print)" do
     let (rc, stdout) = run_nb("```march\nlet x = 99\n```", 0)
     assert (rc == 0)
-    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "")
+    assert (Scroll.extract_cell_output(stdout, 0) == "")
   end
 
   test "binding from earlier cell is visible in later cell" do
     let nb = "```march\nlet x = 7\n```\n\n```march\nx * 6\n```"
     let (rc, stdout) = run_nb(nb, 1)
     assert (rc == 0)
-    assert (ForgeNotebookServer.extract_cell_output(stdout, 1) == "42")
+    assert (Scroll.extract_cell_output(stdout, 1) == "42")
   end
 
   test "string expression prints without extra quotes" do
     let (rc, stdout) = run_nb("```march\n\"hello\"\n```", 0)
     assert (rc == 0)
-    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "hello")
+    assert (Scroll.extract_cell_output(stdout, 0) == "hello")
   end
 
   test "unit expression produces no output" do
     let (rc, stdout) = run_nb("```march\n()\n```", 0)
     assert (rc == 0)
-    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "")
+    assert (Scroll.extract_cell_output(stdout, 0) == "")
   end
 
   test "markdown cells are ignored in runner" do
@@ -325,7 +325,7 @@ describe "integration" do
     let (rc, stdout) = run_nb(nb, 1)
     assert (rc == 0)
     -- code_n is 0 (first Code cell)
-    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "42")
+    assert (Scroll.extract_cell_output(stdout, 0) == "42")
   end
 
   test "syntax error causes non-zero exit" do
@@ -337,15 +337,15 @@ describe "integration" do
     let nb = "```march\nprintln(\"first\")\n```\n\n```march\nprintln(\"second\")\n```"
     let (rc, stdout) = run_nb(nb, 1)
     assert (rc == 0)
-    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "first")
-    assert (ForgeNotebookServer.extract_cell_output(stdout, 1) == "second")
+    assert (Scroll.extract_cell_output(stdout, 0) == "first")
+    assert (Scroll.extract_cell_output(stdout, 1) == "second")
   end
 
   test "arithmetic accumulated across three cells" do
     let nb = "```march\nlet a = 10\n```\n\n```march\nlet b = 32\n```\n\n```march\na + b\n```"
     let (rc, stdout) = run_nb(nb, 2)
     assert (rc == 0)
-    assert (ForgeNotebookServer.extract_cell_output(stdout, 2) == "42")
+    assert (Scroll.extract_cell_output(stdout, 2) == "42")
   end
 
   test "module defined in cell A is callable from cell B" do
@@ -354,7 +354,7 @@ describe "integration" do
     let nb = cell_a ++ "\n\n" ++ cell_b
     let (rc, stdout) = run_nb(nb, 1)
     assert (rc == 0)
-    assert (ForgeNotebookServer.extract_cell_output(stdout, 1) == "Hello, World!")
+    assert (Scroll.extract_cell_output(stdout, 1) == "Hello, World!")
   end
 
   test "module cell produces no output itself" do
@@ -362,7 +362,7 @@ describe "integration" do
     let nb = cell_a
     let (rc, stdout) = run_nb(nb, 0)
     assert (rc == 0)
-    assert (ForgeNotebookServer.extract_cell_output(stdout, 0) == "")
+    assert (Scroll.extract_cell_output(stdout, 0) == "")
   end
 
   test "multiple functions from module cell work in later cells" do
@@ -371,7 +371,7 @@ describe "integration" do
     let nb = cell_a ++ "\n\n" ++ cell_b
     let (rc, stdout) = run_nb(nb, 1)
     assert (rc == 0)
-    assert (ForgeNotebookServer.extract_cell_output(stdout, 1) == "18")
+    assert (Scroll.extract_cell_output(stdout, 1) == "18")
   end
 
 end
@@ -381,28 +381,28 @@ end
 describe "html_escape" do
 
   test "escapes ampersand" do
-    assert (ForgeNotebookServer.html_escape("a & b") == "a &amp; b")
+    assert (Scroll.html_escape("a & b") == "a &amp; b")
   end
 
   test "escapes angle brackets" do
-    assert (ForgeNotebookServer.html_escape("<div>") == "&lt;div&gt;")
+    assert (Scroll.html_escape("<div>") == "&lt;div&gt;")
   end
 
   test "escapes double quote" do
-    assert (ForgeNotebookServer.html_escape("\"x\"") == "&quot;x&quot;")
+    assert (Scroll.html_escape("\"x\"") == "&quot;x&quot;")
   end
 
   test "handles empty string" do
-    assert (ForgeNotebookServer.html_escape("") == "")
+    assert (Scroll.html_escape("") == "")
   end
 
   test "leaves safe chars untouched" do
-    assert (ForgeNotebookServer.html_escape("hello world") == "hello world")
+    assert (Scroll.html_escape("hello world") == "hello world")
   end
 
   test "escapes ampersand before angle brackets (order matters)" do
     -- Must escape & first, otherwise &lt; would become &amp;lt;
-    assert (ForgeNotebookServer.html_escape("<") == "&lt;")
+    assert (Scroll.html_escape("<") == "&lt;")
   end
 
 end
@@ -412,27 +412,27 @@ end
 describe "json_escape" do
 
   test "escapes backslash" do
-    assert (ForgeNotebookServer.json_escape("a\\b") == "a\\\\b")
+    assert (Scroll.json_escape("a\\b") == "a\\\\b")
   end
 
   test "escapes double quote" do
-    assert (ForgeNotebookServer.json_escape("say \"hi\"") == "say \\\"hi\\\"")
+    assert (Scroll.json_escape("say \"hi\"") == "say \\\"hi\\\"")
   end
 
   test "escapes newline" do
-    assert (ForgeNotebookServer.json_escape("a\nb") == "a\\nb")
+    assert (Scroll.json_escape("a\nb") == "a\\nb")
   end
 
   test "escapes tab" do
-    assert (ForgeNotebookServer.json_escape("a\tb") == "a\\tb")
+    assert (Scroll.json_escape("a\tb") == "a\\tb")
   end
 
   test "handles empty string" do
-    assert (ForgeNotebookServer.json_escape("") == "")
+    assert (Scroll.json_escape("") == "")
   end
 
   test "leaves plain ascii unchanged" do
-    assert (ForgeNotebookServer.json_escape("hello") == "hello")
+    assert (Scroll.json_escape("hello") == "hello")
   end
 
 end
@@ -440,15 +440,15 @@ end
 describe "json_str" do
 
   test "wraps plain string in quotes" do
-    assert (ForgeNotebookServer.json_str("hi") == "\"hi\"")
+    assert (Scroll.json_str("hi") == "\"hi\"")
   end
 
   test "escapes inner quotes" do
-    assert (ForgeNotebookServer.json_str("a\"b") == "\"a\\\"b\"")
+    assert (Scroll.json_str("a\"b") == "\"a\\\"b\"")
   end
 
   test "empty string becomes empty quoted" do
-    assert (ForgeNotebookServer.json_str("") == "\"\"")
+    assert (Scroll.json_str("") == "\"\"")
   end
 
 end
@@ -458,31 +458,31 @@ end
 describe "nth_cell" do
 
   test "first cell returns Some(cell0)" do
-    let cells = ForgeNotebookServer.parse_cells("```march\n1\n```\n\n```march\n2\n```")
-    match ForgeNotebookServer.nth_cell(cells, 0) do
-      Some(c) -> assert (String.trim(ForgeNotebookServer.cell_source(c)) == "1")
+    let cells = Scroll.parse_cells("```march\n1\n```\n\n```march\n2\n```")
+    match Scroll.nth_cell(cells, 0) do
+      Some(c) -> assert (String.trim(Scroll.cell_source(c)) == "1")
       None -> assert false
     end
   end
 
   test "second cell returns correct cell" do
-    let cells = ForgeNotebookServer.parse_cells("```march\n1\n```\n\n```march\n2\n```")
-    match ForgeNotebookServer.nth_cell(cells, 1) do
-      Some(c) -> assert (String.trim(ForgeNotebookServer.cell_source(c)) == "2")
+    let cells = Scroll.parse_cells("```march\n1\n```\n\n```march\n2\n```")
+    match Scroll.nth_cell(cells, 1) do
+      Some(c) -> assert (String.trim(Scroll.cell_source(c)) == "2")
       None -> assert false
     end
   end
 
   test "out-of-range index returns None" do
-    let cells = ForgeNotebookServer.parse_cells("```march\n1\n```")
-    match ForgeNotebookServer.nth_cell(cells, 5) do
+    let cells = Scroll.parse_cells("```march\n1\n```")
+    match Scroll.nth_cell(cells, 5) do
       None -> assert true
       Some(_) -> assert false
     end
   end
 
   test "empty list returns None" do
-    match ForgeNotebookServer.nth_cell(Nil, 0) do
+    match Scroll.nth_cell(Nil, 0) do
       None -> assert true
       Some(_) -> assert false
     end
@@ -496,30 +496,30 @@ describe "Section cells" do
 
   test "section comment parses as Section cell" do
     let src = "<!-- section: Intro -->\n\n```march\n1\n```"
-    let cells = ForgeNotebookServer.parse_cells(src)
+    let cells = Scroll.parse_cells(src)
     assert (List.length(cells) == 2)
     match cells do
-      Cons(first, _) -> assert (ForgeNotebookServer.cell_tag(first) == "Section")
+      Cons(first, _) -> assert (Scroll.cell_tag(first) == "Section")
       _ -> assert false
     end
   end
 
   test "section source stores the title" do
     let src = "<!-- section: Intro -->"
-    let cells = ForgeNotebookServer.parse_cells(src)
+    let cells = Scroll.parse_cells(src)
     match cells do
       Cons(c, Nil) ->
-        assert (ForgeNotebookServer.cell_tag(c) == "Section")
-        assert (ForgeNotebookServer.cell_source(c) == "Intro")
+        assert (Scroll.cell_tag(c) == "Section")
+        assert (Scroll.cell_source(c) == "Intro")
       _ -> assert false
     end
   end
 
   test "section interleaves with code and markdown" do
     let src = "# Title\n\n<!-- section: Part 1 -->\n\n```march\n1\n```"
-    let cells = ForgeNotebookServer.parse_cells(src)
+    let cells = Scroll.parse_cells(src)
     assert (List.length(cells) == 3)
-    let tags = List.map(cells, fn c -> ForgeNotebookServer.cell_tag(c))
+    let tags = List.map(cells, fn c -> Scroll.cell_tag(c))
     assert (List.nth(tags, 0) == "Markdown")
     assert (List.nth(tags, 1) == "Section")
     assert (List.nth(tags, 2) == "Code")
@@ -532,18 +532,18 @@ end
 describe "generate_server_runner" do
 
   test "wraps source in ServerCell mod" do
-    let runner = ForgeNotebookServer.generate_server_runner("println(\"ok\")")
+    let runner = Scroll.generate_server_runner("println(\"ok\")")
     assert (String.contains(runner, "mod ServerCell"))
     assert (String.contains(runner, "fn main()"))
   end
 
   test "preserves user source" do
-    let runner = ForgeNotebookServer.generate_server_runner("HttpServer.new(3000)")
+    let runner = Scroll.generate_server_runner("HttpServer.new(3000)")
     assert (String.contains(runner, "HttpServer.new(3000)"))
   end
 
   test "server runner compiles and runs" do
-    let runner = ForgeNotebookServer.generate_server_runner("println(\"hello\")")
+    let runner = Scroll.generate_server_runner("println(\"hello\")")
     let (rc, stdout, _) = run_march(runner)
     assert (rc == 0)
     assert (String.contains(stdout, "hello"))
@@ -556,13 +556,13 @@ end
 describe "extract_vars" do
 
   test "returns empty list when no vars block present" do
-    let vars = ForgeNotebookServer.extract_vars("nothing here")
+    let vars = Scroll.extract_vars("nothing here")
     assert (List.length(vars) == 0)
   end
 
   test "extracts a single var" do
     let stdout = "__MNB_VARS__\nx=42\n__MNB_VARS_END__\n"
-    let vars = ForgeNotebookServer.extract_vars(stdout)
+    let vars = Scroll.extract_vars(stdout)
     assert (List.length(vars) == 1)
     let (name, value) = List.nth(vars, 0)
     assert (name == "x")
@@ -571,13 +571,13 @@ describe "extract_vars" do
 
   test "extracts multiple vars" do
     let stdout = "__MNB_VARS__\na=1\nb=two\nc=\n__MNB_VARS_END__\n"
-    let vars = ForgeNotebookServer.extract_vars(stdout)
+    let vars = Scroll.extract_vars(stdout)
     assert (List.length(vars) == 3)
   end
 
   test "ignores content before and after vars block" do
     let stdout = "pre\n__MNB_VARS__\nk=v\n__MNB_VARS_END__\npost\n"
-    let vars = ForgeNotebookServer.extract_vars(stdout)
+    let vars = Scroll.extract_vars(stdout)
     assert (List.length(vars) == 1)
     let (name, value) = List.nth(vars, 0)
     assert (name == "k")
@@ -592,7 +592,7 @@ describe "strip_forge_adds" do
 
   test "removes forge add sentinel line" do
     let out = "hello\n__FORGE_ADD__:json\nworld\n"
-    let clean = ForgeNotebookServer.strip_forge_adds(out)
+    let clean = Scroll.strip_forge_adds(out)
     assert not(String.contains(clean, "__FORGE_ADD__"))
     assert (String.contains(clean, "hello"))
     assert (String.contains(clean, "world"))
@@ -600,16 +600,16 @@ describe "strip_forge_adds" do
 
   test "preserves output with no sentinels" do
     let out = "just normal output\n"
-    assert (ForgeNotebookServer.strip_forge_adds(out) == out)
+    assert (Scroll.strip_forge_adds(out) == out)
   end
 
   test "handles empty string" do
-    assert (ForgeNotebookServer.strip_forge_adds("") == "")
+    assert (Scroll.strip_forge_adds("") == "")
   end
 
   test "removes multiple sentinel lines" do
     let out = "__FORGE_ADD__:a\n__FORGE_ADD__:b\nkeep\n"
-    let clean = ForgeNotebookServer.strip_forge_adds(out)
+    let clean = Scroll.strip_forge_adds(out)
     assert not(String.contains(clean, "__FORGE_ADD__"))
     assert (String.contains(clean, "keep"))
   end
@@ -621,25 +621,25 @@ end
 describe "find_code_idx" do
 
   test "first code cell at overall idx 0 maps to 0" do
-    let cells = ForgeNotebookServer.parse_cells("```march\n1\n```")
-    assert (ForgeNotebookServer.find_code_idx(cells, 0) == 0)
+    let cells = Scroll.parse_cells("```march\n1\n```")
+    assert (Scroll.find_code_idx(cells, 0) == 0)
   end
 
   test "code cell after markdown maps correctly" do
-    let cells = ForgeNotebookServer.parse_cells("# Title\n\n```march\n1\n```")
+    let cells = Scroll.parse_cells("# Title\n\n```march\n1\n```")
     -- overall idx 1 is the code cell; code-n is 0 (first code)
-    assert (ForgeNotebookServer.find_code_idx(cells, 1) == 0)
+    assert (Scroll.find_code_idx(cells, 1) == 0)
   end
 
   test "second code cell maps to code-n 1" do
-    let cells = ForgeNotebookServer.parse_cells("```march\n1\n```\n\n```march\n2\n```")
-    assert (ForgeNotebookServer.find_code_idx(cells, 1) == 1)
+    let cells = Scroll.parse_cells("```march\n1\n```\n\n```march\n2\n```")
+    assert (Scroll.find_code_idx(cells, 1) == 1)
   end
 
   test "markdown target returns previous code index minus 1" do
     -- A markdown cell at overall idx 0 before any code returns -1.
-    let cells = ForgeNotebookServer.parse_cells("# Title\n\n```march\n42\n```")
-    assert (ForgeNotebookServer.find_code_idx(cells, 0) == -1)
+    let cells = Scroll.parse_cells("# Title\n\n```march\n42\n```")
+    assert (Scroll.find_code_idx(cells, 0) == -1)
   end
 
 end
@@ -649,33 +649,33 @@ end
 describe "output_msg" do
 
   test "contains type and index" do
-    let msg = ForgeNotebookServer.output_msg(3, "hi", None, Nil)
+    let msg = Scroll.output_msg(3, "hi", None, Nil)
     assert (String.contains(msg, "\"type\":\"output\""))
     assert (String.contains(msg, "\"index\":3"))
   end
 
   test "encodes stdout field" do
-    let msg = ForgeNotebookServer.output_msg(0, "hello", None, Nil)
+    let msg = Scroll.output_msg(0, "hello", None, Nil)
     assert (String.contains(msg, "\"stdout\":\"hello\""))
   end
 
   test "error None encodes as null" do
-    let msg = ForgeNotebookServer.output_msg(0, "", None, Nil)
+    let msg = Scroll.output_msg(0, "", None, Nil)
     assert (String.contains(msg, "\"error\":null"))
   end
 
   test "error Some encodes as string" do
-    let msg = ForgeNotebookServer.output_msg(0, "", Some("boom"), Nil)
+    let msg = Scroll.output_msg(0, "", Some("boom"), Nil)
     assert (String.contains(msg, "\"error\":\"boom\""))
   end
 
   test "escapes quotes in stdout" do
-    let msg = ForgeNotebookServer.output_msg(0, "say \"hi\"", None, Nil)
+    let msg = Scroll.output_msg(0, "say \"hi\"", None, Nil)
     assert (String.contains(msg, "\\\"hi\\\""))
   end
 
   test "includes vars object" do
-    let msg = ForgeNotebookServer.output_msg(0, "", None, Cons(("x", "42"), Nil))
+    let msg = Scroll.output_msg(0, "", None, Cons(("x", "42"), Nil))
     assert (String.contains(msg, "\"x\":\"42\""))
   end
 
@@ -684,29 +684,29 @@ end
 describe "notebook_msg" do
 
   test "contains type notebook" do
-    let cells = ForgeNotebookServer.parse_cells("```march\n1\n```")
-    let msg = ForgeNotebookServer.notebook_msg("```march\n1\n```", cells)
+    let cells = Scroll.parse_cells("```march\n1\n```")
+    let msg = Scroll.notebook_msg("```march\n1\n```", cells)
     assert (String.contains(msg, "\"type\":\"notebook\""))
   end
 
   test "includes source content" do
-    let cells = ForgeNotebookServer.parse_cells("hello")
-    let msg = ForgeNotebookServer.notebook_msg("hello", cells)
+    let cells = Scroll.parse_cells("hello")
+    let msg = Scroll.notebook_msg("hello", cells)
     assert (String.contains(msg, "\"source\":\"hello\""))
   end
 
   test "cells array includes kind fields" do
     let content = "# Title\n\n```march\n1\n```"
-    let cells = ForgeNotebookServer.parse_cells(content)
-    let msg = ForgeNotebookServer.notebook_msg(content, cells)
+    let cells = Scroll.parse_cells(content)
+    let msg = Scroll.notebook_msg(content, cells)
     assert (String.contains(msg, "\"kind\":\"markdown\""))
     assert (String.contains(msg, "\"kind\":\"code\""))
   end
 
   test "server cell kind is present" do
     let content = "```march:server\nHttpServer.new(3000)\n```"
-    let cells = ForgeNotebookServer.parse_cells(content)
-    let msg = ForgeNotebookServer.notebook_msg(content, cells)
+    let cells = Scroll.parse_cells(content)
+    let msg = Scroll.notebook_msg(content, cells)
     assert (String.contains(msg, "\"kind\":\"server\""))
   end
 
@@ -719,7 +719,7 @@ describe "json_get_str" do
   test "returns Some for existing string field" do
     match Json.parse("{\"name\":\"alice\"}") do
       Ok(jv) ->
-        match ForgeNotebookServer.json_get_str(jv, "name") do
+        match Scroll.json_get_str(jv, "name") do
           Some(v) -> assert (v == "alice")
           None -> assert false
         end
@@ -730,7 +730,7 @@ describe "json_get_str" do
   test "returns None for missing field" do
     match Json.parse("{\"a\":1}") do
       Ok(jv) ->
-        match ForgeNotebookServer.json_get_str(jv, "missing") do
+        match Scroll.json_get_str(jv, "missing") do
           None -> assert true
           Some(_) -> assert false
         end
@@ -741,7 +741,7 @@ describe "json_get_str" do
   test "unescapes newlines in string values" do
     match Json.parse("{\"msg\":\"a\\nb\"}") do
       Ok(jv) ->
-        match ForgeNotebookServer.json_get_str(jv, "msg") do
+        match Scroll.json_get_str(jv, "msg") do
           Some(v) -> assert (v == "a\nb")
           None -> assert false
         end
@@ -756,7 +756,7 @@ describe "json_get_int" do
   test "returns Some for existing int field" do
     match Json.parse("{\"n\":42}") do
       Ok(jv) ->
-        match ForgeNotebookServer.json_get_int(jv, "n") do
+        match Scroll.json_get_int(jv, "n") do
           Some(v) -> assert (v == 42)
           None -> assert false
         end
@@ -767,7 +767,7 @@ describe "json_get_int" do
   test "returns None for missing field" do
     match Json.parse("{\"a\":1}") do
       Ok(jv) ->
-        match ForgeNotebookServer.json_get_int(jv, "missing") do
+        match Scroll.json_get_int(jv, "missing") do
           None -> assert true
           Some(_) -> assert false
         end
@@ -778,7 +778,7 @@ describe "json_get_int" do
   test "returns int part for float values" do
     match Json.parse("{\"f\":3.14}") do
       Ok(jv) ->
-        match ForgeNotebookServer.json_get_int(jv, "f") do
+        match Scroll.json_get_int(jv, "f") do
           Some(v) -> assert (v == 3)
           None -> assert false
         end
@@ -793,35 +793,35 @@ end
 describe "ui_html" do
 
   test "includes DOCTYPE and html shell" do
-    let html = ForgeNotebookServer.ui_html("notebook.scrollmd", 4040)
+    let html = Scroll.ui_html("notebook.scrollmd", 4040)
     assert (String.contains(html, "<!DOCTYPE html>"))
     assert (String.contains(html, "<html"))
     assert (String.contains(html, "</html>"))
   end
 
   test "references css asset at expected path" do
-    let html = ForgeNotebookServer.ui_html("nb.scrollmd", 4040)
+    let html = Scroll.ui_html("nb.scrollmd", 4040)
     assert (String.contains(html, "/assets/css/scroll.css"))
   end
 
   test "references js assets at expected paths" do
-    let html = ForgeNotebookServer.ui_html("nb.scrollmd", 4040)
+    let html = Scroll.ui_html("nb.scrollmd", 4040)
     assert (String.contains(html, "/assets/js/scroll.js"))
     assert (String.contains(html, "/assets/js/editor.js"))
   end
 
   test "embeds nb_path as data attribute" do
-    let html = ForgeNotebookServer.ui_html("foo.scrollmd", 4040)
+    let html = Scroll.ui_html("foo.scrollmd", 4040)
     assert (String.contains(html, "data-nb-path=\"foo.scrollmd\""))
   end
 
   test "embeds port as data attribute" do
-    let html = ForgeNotebookServer.ui_html("n", 4443)
+    let html = Scroll.ui_html("n", 4443)
     assert (String.contains(html, "data-ws-port=\"4443\""))
   end
 
   test "includes toolbar with run button" do
-    let html = ForgeNotebookServer.ui_html("n", 4040)
+    let html = Scroll.ui_html("n", 4040)
     assert (String.contains(html, "id=\"btn-run-all\""))
   end
 
@@ -832,12 +832,12 @@ end
 describe "process_forge_adds" do
 
   test "returns empty list when stdout has no sentinels" do
-    let results = ForgeNotebookServer.process_forge_adds("no sentinels here", "/tmp/fake.scrollmd")
+    let results = Scroll.process_forge_adds("no sentinels here", "/tmp/fake.scrollmd")
     assert (List.length(results) == 0)
   end
 
   test "returns empty list for empty stdout" do
-    let results = ForgeNotebookServer.process_forge_adds("", "/tmp/fake.scrollmd")
+    let results = Scroll.process_forge_adds("", "/tmp/fake.scrollmd")
     assert (List.length(results) == 0)
   end
 
@@ -849,7 +849,7 @@ describe "read_server_log" do
 
   test "returns empty string when no log file exists" do
     -- Unlikely index → file won't exist
-    let content = ForgeNotebookServer.read_server_log(9999)
+    let content = Scroll.read_server_log(9999)
     assert (content == "")
   end
 
@@ -859,7 +859,7 @@ describe "server_is_running" do
 
   test "returns false when no vault entry exists" do
     -- Unlikely index → vault key won't be set
-    assert (ForgeNotebookServer.server_is_running(9998) == false)
+    assert (Scroll.server_is_running(9998) == false)
   end
 
 end
@@ -868,8 +868,8 @@ describe "stop_server_proc" do
 
   test "is a no-op when nothing is running" do
     -- Calling stop on an unknown index must not crash.
-    ForgeNotebookServer.stop_server_proc(9997)
-    assert (ForgeNotebookServer.server_is_running(9997) == false)
+    Scroll.stop_server_proc(9997)
+    assert (Scroll.server_is_running(9997) == false)
   end
 
 end
@@ -878,7 +878,7 @@ describe "stop_run_proc" do
 
   test "is a no-op when nothing is running" do
     -- Calling stop on an unknown index must not crash.
-    ForgeNotebookServer.stop_run_proc(9996)
+    Scroll.stop_run_proc(9996)
     assert true
   end
 
@@ -889,7 +889,7 @@ pfn wait_for_run(idx, attempts) do
   if attempts <= 0 do
     None
   else
-    match ForgeNotebookServer.check_run_proc(idx) do
+    match Scroll.check_run_proc(idx) do
       None -> do
         let _ = Process.run("sh", ["-c", "sleep 0.1"])
         wait_for_run(idx, attempts - 1)
@@ -902,8 +902,8 @@ end
 describe "start_run_proc + check_run_proc" do
 
   test "runs a simple cell end-to-end and reports output" do
-    let cells = ForgeNotebookServer.parse_cells("```march\n40 + 2\n```")
-    match ForgeNotebookServer.start_run_proc(cells, 0, "march") do
+    let cells = Scroll.parse_cells("```march\n40 + 2\n```")
+    match Scroll.start_run_proc(cells, 0, "march") do
       Err(msg) -> do
         IO.puts("start_run_proc failed: " ++ msg)
         assert false
@@ -911,7 +911,7 @@ describe "start_run_proc + check_run_proc" do
       Ok(_pid) -> do
         match wait_for_run(0, 60) do
           None -> do
-            ForgeNotebookServer.stop_run_proc(0)
+            Scroll.stop_run_proc(0)
             assert false
           end
           Some((stdout, err_opt, _vars)) -> do
@@ -924,13 +924,13 @@ describe "start_run_proc + check_run_proc" do
   end
 
   test "reports error on syntax-broken cell" do
-    let cells = ForgeNotebookServer.parse_cells("```march\n@@@ bad @@@\n```")
-    match ForgeNotebookServer.start_run_proc(cells, 0, "march") do
+    let cells = Scroll.parse_cells("```march\n@@@ bad @@@\n```")
+    match Scroll.start_run_proc(cells, 0, "march") do
       Err(_) -> assert true
       Ok(_pid) -> do
         match wait_for_run(0, 60) do
           None -> do
-            ForgeNotebookServer.stop_run_proc(0)
+            Scroll.stop_run_proc(0)
             assert false
           end
           Some((_stdout, err_opt, _vars)) -> do
@@ -951,13 +951,13 @@ describe "start_server_proc" do
   test "starts and stops a server cell process" do
     -- Long-running server: invoke sleep via Process.run so the March process stays alive.
     let src = "let _ = Process.run(\"sh\", [\"-c\", \"sleep 10\"])"
-    match ForgeNotebookServer.start_server_proc(src, 8888, "march") do
+    match Scroll.start_server_proc(src, 8888, "march") do
       Err(_msg) -> assert false
       Ok(_pid) -> do
         -- Give march a moment to start up before checking.
         let _ = Process.run("sh", ["-c", "sleep 0.5"])
-        let running = ForgeNotebookServer.server_is_running(8888)
-        ForgeNotebookServer.stop_server_proc(8888)
+        let running = Scroll.server_is_running(8888)
+        Scroll.stop_server_proc(8888)
         assert running
       end
     end

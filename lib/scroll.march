@@ -12,13 +12,13 @@
 --   Session   — WebSocket handler and receive loop
 --   Page      — Browser UI HTML/CSS/JS
 
-mod ForgeNotebookServer do
+mod Scroll do
 
 import Runner
 import Session
 
 -- ── Public API delegation wrappers ────────────────────────────────────────────
--- Tests (test_scroll.march) call these as ForgeNotebookServer.fn_name.
+-- Tests (test_scroll.march) call these as Scroll.fn_name.
 -- import does not re-export, so we delegate explicitly.
 
 fn parse_cells(content)                 do Cells.parse_cells(content) end

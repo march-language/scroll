@@ -43,16 +43,21 @@ fn output_msg(idx, stdout_text, error_opt, vars) do
   ",\"vars\":" ++ vars_to_json(vars) ++ "}"
 end
 
-pfn cells_to_json(cells) do
-  fn cell_obj(cell) do
-    match cell do
-      Markdown(s)   -> "{\"kind\":\"markdown\",\"source\":" ++ json_str(s) ++ "}"
-      Code(s)       -> "{\"kind\":\"code\",\"source\":" ++ json_str(s) ++ "}"
-      ServerCell(s) -> "{\"kind\":\"server\",\"source\":" ++ json_str(s) ++ "}"
-      Section(t)    -> "{\"kind\":\"section\",\"source\":" ++ json_str(t) ++ "}"
-    end
+-- Lifted to module-level pfn to avoid a captured-closure RC bug:
+-- when cell_obj was an inner `fn` closure passed to List.map with 2+ cells,
+-- Perceus mismanaged its RC on the second call.  Module-level pfns don't
+-- carry a heap-allocated closure environment, so the RC issue doesn't apply.
+pfn cell_to_json_obj(cell) do
+  match cell do
+    Markdown(s)   -> "{\"kind\":\"markdown\",\"source\":" ++ json_str(s) ++ "}"
+    Code(s)       -> "{\"kind\":\"code\",\"source\":" ++ json_str(s) ++ "}"
+    ServerCell(s) -> "{\"kind\":\"server\",\"source\":" ++ json_str(s) ++ "}"
+    Section(t)    -> "{\"kind\":\"section\",\"source\":" ++ json_str(t) ++ "}"
   end
-  "[" ++ String.join(List.map(cells, cell_obj), ",") ++ "]"
+end
+
+pfn cells_to_json(cells) do
+  "[" ++ String.join(List.map(cells, cell_to_json_obj), ",") ++ "]"
 end
 
 fn notebook_msg(content, cells) do

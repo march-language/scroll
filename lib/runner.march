@@ -85,12 +85,17 @@ fn generate_runner(cells, run_through_idx) do
   --   stop when depth reaches 0 (we found the start of the statement)
   fn split_last(lines) do
     -- Drop trailing blank lines from a reversed list.
+    -- NOTE: Rebuilding `Cons(l, rest)` (instead of returning `ls` verbatim)
+    -- sidesteps a March RC-underflow bug: returning the still-bound parameter
+    -- after a pattern match that destructures its fields corrupts the local
+    -- refcount inside nested-closure contexts like this one. The rebuilt
+    -- Cons is semantically identical. Minimal reproducer: /tmp/rc50.march.
     fn drop_blank(ls) do
       match ls do
         Nil -> Nil
         Cons(l, rest) ->
           if String.is_empty(trim(l)) do drop_blank(rest)
-          else ls
+          else Cons(l, rest)
           end
       end
     end
@@ -178,16 +183,26 @@ fn generate_runner(cells, run_through_idx) do
     let lines = cell_lines(src)
     match split_last(lines) do
       (preamble, last_stmt) ->
-        let pre_str = if List.is_empty(preamble) do ""
-          else String.join(List.map(preamble, fn l -> "  " ++ l), "\n") ++ "\n"
-          end
+        -- Pre-compute both unconditionally to avoid a captured-closure RC bug:
+        -- `preamble` (from the `split_last` captured-closure tuple return) underflows
+        -- when used first in a condition and again in the else-branch.
+        let is_empty_preamble = List.is_empty(preamble)
+        let pre_str_body = String.join(List.map(preamble, fn l -> "  " ++ l), "\n") ++ "\n"
+        let pre_str = if is_empty_preamble do "" else pre_str_body end
         -- First line of the last statement drives classification.
         let first_line = match last_stmt do Cons(l, _) -> l | Nil -> "" end
         -- Emit the full statement (all lines), indented.
         let stmt_str = String.join(List.map(last_stmt, fn l -> "  " ++ l), "\n") ++ "\n"
+        -- Pre-compute these unconditionally to avoid a captured-closure RC bug:
+        -- `last_stmt` (returned from the `split_last` captured closure via a tuple
+        -- destructure) underflows when used conditionally inside a nested-match
+        -- branch.  Consuming last_stmt here, before the `if`, ensures Perceus
+        -- sees all four uses in straight-line code with no conditional aliases.
+        let is_empty_stmt = List.is_empty(last_stmt)
+        let joined_stmt   = String.join(last_stmt, "\n")
         -- Determine how to capture the result.
         let (binding_str, result_expr) =
-          if List.is_empty(last_stmt) do
+          if is_empty_stmt do
             ("", "()")
           else
             match let_bound_name(first_line) do
@@ -200,7 +215,7 @@ fn generate_runner(cells, run_through_idx) do
                   (stmt_str, "()")
                 else
                   -- Plain expression — possibly multi-line; join as single expr
-                  ("", String.join(last_stmt, "\n"))
+                  ("", joined_stmt)
                 end
             end
           end
