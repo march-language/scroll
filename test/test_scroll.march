@@ -16,16 +16,19 @@ mod TestScroll do
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
 -- Write string to a temp file, return path.
-pfn write_tmp(content, suffix) do
+fn write_tmp(content, suffix) do
   let path = "/tmp/test_scroll_" ++ String.from_int(System.pid()) ++ suffix
   match File.write(path, content) do
     Ok(_) -> path
-    Err(e) -> panic("write_tmp failed: " ++ e)
+    Err(e) -> do
+      assert (e == "")  -- write_tmp failed; force a test failure with the error in scope
+      ""
+    end
   end
 end
 
 -- Run march on a source string; return (exit_code, stdout, stderr).
-pfn run_march(march_src) do
+fn run_march(march_src) do
   let tmp = write_tmp(march_src, ".march")
   match System.cmd("march", [tmp]) do
     Ok(r) -> (System.exit_code(r), System.stdout(r), System.stderr(r))
@@ -35,7 +38,7 @@ end
 
 -- Parse notebook content, generate runner through nb_idx, execute,
 -- and return (exit_code, raw_stdout).
-pfn run_nb(nb_content, nb_idx) do
+fn run_nb(nb_content, nb_idx) do
   let cells = ForgeNotebookServer.parse_cells(nb_content)
   let runner = ForgeNotebookServer.generate_runner(cells, nb_idx)
   let (rc, stdout, _) = run_march(runner)
@@ -885,7 +888,7 @@ describe "stop_run_proc" do
 end
 
 -- Helper: poll check_run_proc until finished (max attempts to prevent hangs).
-pfn wait_for_run(idx, attempts) do
+fn wait_for_run(idx, attempts) do
   if attempts <= 0 do
     None
   else

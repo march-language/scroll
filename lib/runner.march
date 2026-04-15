@@ -12,8 +12,6 @@
 
 mod Runner do
 
-import Cells
-
 -- ── Local string helpers ──────────────────────────────────────────────────────
 
 pfn bs(s) do String.byte_size(s) end
@@ -393,7 +391,7 @@ end
 -- Run `forge add` for a spec string in the notebook's directory.
 -- spec can be: "name --git url", "name --path ../lib", or "name" (registry).
 -- Returns (name, ok?, message) tuple.
-pfn run_forge_add(spec, nb_path) do
+fn run_forge_add(spec, nb_path) do
   -- Find directory by stripping the last path component
   let parts = String.split(nb_path, "/")
   let nb_dir = if List.length(parts) > 1 do
