@@ -191,6 +191,26 @@ describe "extract_cell_output" do
     assert (out == "result")
   end
 
+  -- Issue #5: token-based marker path (session token present in stdout).
+  test "extracts output with token-based markers" do
+    let tok = "12345_0"
+    let stdout =
+      "__MNB_TOK_" ++ tok ++ "\n" ++
+      "__MNB_S_" ++ tok ++ "_0__\nhello\n__MNB_E_" ++ tok ++ "_0__\n"
+    let out = Scroll.extract_cell_output(stdout, 0)
+    assert (out == "hello")
+  end
+
+  test "token markers take priority over legacy markers when token is present" do
+    let tok = "99_1"
+    let stdout =
+      "__MNB_TOK_" ++ tok ++ "\n" ++
+      "__MNB_S_" ++ tok ++ "_0__\ntok-output\n__MNB_E_" ++ tok ++ "_0__\n" ++
+      "__MNB_START_0__\nlegacy-output\n__MNB_END_0__\n"
+    let out = Scroll.extract_cell_output(stdout, 0)
+    assert (out == "tok-output")
+  end
+
 end
 
 -- ── extract_forge_adds ───────────────────────────────────────────────────────
@@ -236,27 +256,30 @@ describe "generate_runner" do
   end
 
   test "includes start and end markers for cell 0" do
+    -- Issue #5: runner now uses token-based markers __MNB_S_<tok>_N__ / __MNB_E_<tok>_N__.
     let cells = Scroll.parse_cells("```march\n1 + 1\n```")
     let runner = Scroll.generate_runner(cells, 0)
-    assert (String.contains(runner, "__MNB_START_0__"))
-    assert (String.contains(runner, "__MNB_END_0__"))
+    assert (String.contains(runner, "__MNB_S_"))
+    assert (String.contains(runner, "__MNB_E_"))
   end
 
   test "skips Markdown cells in sentinel numbering" do
-    -- Markdown + one Code → only cell 0 sentinels in runner
+    -- Markdown + one Code → only cell 0 sentinels in runner.
+    -- Token-based suffix: _0__ for cell 0, _1__ for cell 1.
     let cells = Scroll.parse_cells("# Title\n\n```march\n42\n```")
     let runner = Scroll.generate_runner(cells, 1)
-    assert (String.contains(runner, "__MNB_START_0__"))
-    assert not(String.contains(runner, "__MNB_START_1__"))
+    assert (String.contains(runner, "_0__"))
+    assert not(String.contains(runner, "_1__"))
   end
 
   test "runs only up to run_through_idx" do
+    -- Token-based suffix: _0__, _1__, _2__ identify cell markers.
     let nb = "```march\n1\n```\n\n```march\n2\n```\n\n```march\n3\n```"
     let cells = Scroll.parse_cells(nb)
     let runner = Scroll.generate_runner(cells, 1)
-    assert (String.contains(runner, "__MNB_START_0__"))
-    assert (String.contains(runner, "__MNB_START_1__"))
-    assert not(String.contains(runner, "__MNB_START_2__"))
+    assert (String.contains(runner, "_0__"))
+    assert (String.contains(runner, "_1__"))
+    assert not(String.contains(runner, "_2__"))
   end
 
   test "let binding is suppressed (Jupyter convention)" do
@@ -277,6 +300,13 @@ describe "generate_runner" do
     let runner = Scroll.generate_runner(cells, 0)
     let (rc, _, _) = run_march(runner)
     assert (rc == 0)
+  end
+
+  -- Issue #5: generated runner must contain the session token sentinel line.
+  test "generated runner contains session token line" do
+    let cells = Scroll.parse_cells("```march\n1 + 1\n```")
+    let runner = Scroll.generate_runner(cells, 0)
+    assert (String.contains(runner, "__MNB_TOK_"))
   end
 
 end
@@ -377,6 +407,14 @@ describe "integration" do
     assert (Scroll.extract_cell_output(stdout, 1) == "18")
   end
 
+  -- Issue #7: string literal containing closing brackets must not trigger multi-line scan.
+  test "string with closing brackets in value is not misclassified as continuation" do
+    let nb = "```march\n\"result: )))\"\n```"
+    let (rc, stdout) = run_nb(nb, 0)
+    assert (rc == 0)
+    assert (Scroll.extract_cell_output(stdout, 0) == "result: )))")
+  end
+
 end
 
 -- ── html_escape ───────────────────────────────────────────────────────────────
@@ -436,6 +474,28 @@ describe "json_escape" do
 
   test "leaves plain ascii unchanged" do
     assert (Scroll.json_escape("hello") == "hello")
+  end
+
+  -- Issue #17: control chars below U+0020 that lack named escapes.
+  test "escapes NUL byte as \\u0000" do
+    let nul = Char.to_string(Char.from_int(0))
+    assert (Scroll.json_escape(nul) == "\\u0000")
+  end
+
+  test "escapes BEL (0x07) as \\u0007" do
+    let bel = Char.to_string(Char.from_int(7))
+    assert (Scroll.json_escape(bel) == "\\u0007")
+  end
+
+  test "escapes VT (0x0B) as \\u000b" do
+    let vt = Char.to_string(Char.from_int(11))
+    assert (Scroll.json_escape(vt) == "\\u000b")
+  end
+
+  test "control chars in mixed string are all escaped" do
+    let nul = Char.to_string(Char.from_int(0))
+    let result = Scroll.json_escape("a" ++ nul ++ "b")
+    assert (result == "a\\u0000b")
   end
 
 end
@@ -639,7 +699,7 @@ describe "find_code_idx" do
     assert (Scroll.find_code_idx(cells, 1) == 1)
   end
 
-  test "markdown target returns previous code index minus 1" do
+  test "returns -1 when target is markdown with no prior code cell" do
     -- A markdown cell at overall idx 0 before any code returns -1.
     let cells = Scroll.parse_cells("# Title\n\n```march\n42\n```")
     assert (Scroll.find_code_idx(cells, 0) == -1)
@@ -752,6 +812,19 @@ describe "json_get_str" do
     end
   end
 
+  -- Issue #16: backslash immediately before a quote inside a JSON string value.
+  -- JSON "a\\\"b" decodes to a, \, ", b  (four characters).
+  test "backslash before quote in value is preserved" do
+    match Json.parse("{\"s\":\"a\\\\\\\"b\"}") do
+      Ok(jv) ->
+        match Scroll.json_get_str(jv, "s") do
+          Some(v) -> assert (v == "a\\\"b")
+          None -> assert false
+        end
+      Err(_) -> assert false
+    end
+  end
+
 end
 
 describe "json_get_int" do
@@ -842,6 +915,31 @@ describe "process_forge_adds" do
   test "returns empty list for empty stdout" do
     let results = Scroll.process_forge_adds("", "/tmp/fake.scrollmd")
     assert (List.length(results) == 0)
+  end
+
+  -- Issue #8: shell injection via __FORGE_ADD__ sentinel must be rejected.
+  test "rejects spec containing semicolon" do
+    let stdout = "__FORGE_ADD__:; rm -rf /\n"
+    let results = Scroll.process_forge_adds(stdout, "/tmp/fake.scrollmd")
+    assert (List.length(results) == 1)
+    let (_, ok, _) = List.nth(results, 0)
+    assert (ok == false)
+  end
+
+  test "rejects spec containing pipe character" do
+    let stdout = "__FORGE_ADD__:json | evil\n"
+    let results = Scroll.process_forge_adds(stdout, "/tmp/fake.scrollmd")
+    assert (List.length(results) == 1)
+    let (_, ok, _) = List.nth(results, 0)
+    assert (ok == false)
+  end
+
+  test "rejects spec containing dollar sign" do
+    let stdout = "__FORGE_ADD__:$(evil)\n"
+    let results = Scroll.process_forge_adds(stdout, "/tmp/fake.scrollmd")
+    assert (List.length(results) == 1)
+    let (_, ok, _) = List.nth(results, 0)
+    assert (ok == false)
   end
 
 end
@@ -944,6 +1042,17 @@ describe "start_run_proc + check_run_proc" do
           end
         end
       end
+    end
+  end
+
+  -- Issue #4: start_run_proc must return Err when the target index is a
+  -- non-code cell and no code cell precedes it (cidx = -1).
+  test "returns error when idx points to markdown before any code" do
+    let cells = Scroll.parse_cells("# Title\n\n```march\n42\n```")
+    -- overall idx 0 is the Markdown cell; no code cell has been seen yet
+    match Scroll.start_run_proc(cells, 0, "march") do
+      Err(_) -> assert true
+      Ok(_) -> assert false
     end
   end
 
