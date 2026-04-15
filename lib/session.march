@@ -10,12 +10,10 @@ mod Session do
   -- Public API (fn):
   --   ws_loop/3 : receive and handle WebSocket frames until the connection closes
   import Cells
-  import Runner
-  import Processes
   import Protocol
 
   -- Send a dep_added/dep_error frame for one Forge.add() result tuple.
-  pfn send_dep_result(socket, result) do
+  fn send_dep_result(socket, result) do
     let (name, ok, message) = result
     if ok do
       WebSocket.send_frame(socket, TextFrame("{\"type\":\"dep_added\",\"name\":" ++ json_str(name) ++ ",\"status\":\"ok\",\"message\":" ++ json_str(message) ++ "}"))

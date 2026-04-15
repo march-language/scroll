@@ -11,12 +11,6 @@
 
 mod Cells do
 
--- ── String helpers ────────────────────────────────────────────────────────────
-
-pfn bs(s) do String.byte_size(s) end
-pfn sw(s, p) do String.starts_with(s, p) end
-pfn trim(s) do String.trim(s) end
-
 fn html_escape(s) do
   let s = String.replace_all(s, "&", "&amp;")
   let s = String.replace_all(s, "<", "&lt;")
@@ -60,7 +54,7 @@ fn parse_cells(content) do
           if mode == "server" do
             List.reverse(Cons(ServerCell(text), cells))
           else
-            let trimmed = trim(text)
+            let trimmed = String.trim(text)
             if String.is_empty(trimmed) do
               List.reverse(cells)
             else
@@ -69,7 +63,7 @@ fn parse_cells(content) do
           end
         end
       Cons(line, rest) ->
-        let stripped = trim(line)
+        let stripped = String.trim(line)
         if mode == "code" do
           if stripped == "```" do
             let code = String.join(List.reverse(buf), "\n")
@@ -87,7 +81,7 @@ fn parse_cells(content) do
             end
           else
             if stripped == "```march" do
-              let text = trim(String.join(List.reverse(buf), "\n"))
+              let text = String.trim(String.join(List.reverse(buf), "\n"))
               let new_cells =
                 if String.is_empty(text) do cells
                 else Cons(Markdown(text), cells)
@@ -95,7 +89,7 @@ fn parse_cells(content) do
               go(rest, new_cells, Nil, "code")
             else
               if stripped == "```march:server" do
-                let text = trim(String.join(List.reverse(buf), "\n"))
+                let text = String.trim(String.join(List.reverse(buf), "\n"))
                 let new_cells =
                   if String.is_empty(text) do cells
                   else Cons(Markdown(text), cells)
@@ -103,14 +97,14 @@ fn parse_cells(content) do
                 go(rest, new_cells, Nil, "server")
               else
                 if String.starts_with(stripped, "<!-- section:") && String.ends_with(stripped, "-->") do
-                  let text = trim(String.join(List.reverse(buf), "\n"))
+                  let text = String.trim(String.join(List.reverse(buf), "\n"))
                   let cells_with_md =
                     if String.is_empty(text) do cells
                     else Cons(Markdown(text), cells)
                     end
                   -- String.slice(s, start, length); drop 13-char prefix and 3-char suffix.
-                  let inner = String.slice(stripped, 13, bs(stripped) - 16)
-                  let title = trim(inner)
+                  let inner = String.slice(stripped, 13, String.byte_size(stripped) - 16)
+                  let title = String.trim(inner)
                   go(rest, Cons(Section(title), cells_with_md), Nil, "none")
                 else
                   go(rest, cells, Cons(line, buf), "none")
