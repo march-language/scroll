@@ -56,6 +56,12 @@ fn check_run_proc(run_through_idx, nb_path) do
   end
 end
 
+-- Poll for live/intermediate output of the currently running cell.
+-- Returns None if context cells haven't finished, Some(partial_output) otherwise.
+fn live_run_proc(nb_path) do
+  Runtime.poll_live(session_id(nb_path))
+end
+
 -- Kill the REPL for this session.
 fn stop_run_proc(nb_path) do
   Runtime.stop_runtime(session_id(nb_path))

@@ -71,23 +71,27 @@ if (document.fonts && document.fonts.ready) {
 
 function handleMsg(msg) {
   if (msg.type === "notebook") {
-    cells = msg.cells.map(c => ({...c, output:"", error:null, running:false, _elapsed_ms:null}));
+    cells = msg.cells.map(c => ({...c, output:"", error:null, running:false, _elapsed_ms:null, live_output:""}));
     window._nbCells = cells;
     render();
     setStatus("ok", "loaded");
   } else if (msg.type === "running") {
     const idx = msg.index;
-    if (cells[idx]) { cells[idx].running = true; cells[idx]._start_ms = Date.now(); updateCell(idx); }
+    if (cells[idx]) { cells[idx].running = true; cells[idx]._start_ms = Date.now(); cells[idx].live_output = ""; updateCell(idx); }
     setStatus("running", "running…");
     startRunPoll(idx);
   } else if (msg.type === "still_running") {
     const idx = msg.index;
-    if (cells[idx]) updateCell(idx);  // refreshes elapsed counter
+    if (cells[idx]) {
+      if (msg.live !== undefined) cells[idx].live_output = msg.live;
+      updateCell(idx);  // refreshes elapsed counter + live output
+    }
   } else if (msg.type === "output") {
     const idx = msg.index;
     stopRunPoll(idx);
     if (cells[idx]) {
       cells[idx].running = false;
+      cells[idx].live_output = "";
       cells[idx].output  = msg.stdout || "";
       cells[idx].error   = msg.error || null;
       cells[idx]._elapsed_ms = cells[idx]._start_ms ? Date.now() - cells[idx]._start_ms : null;
@@ -733,6 +737,9 @@ function codeCell(idx, cell) {
     : cell.output
       ? `<div class="cell-out-wrap">${copyBtn}${renderOutput(cell.output)}</div>`
       : "";
+  const liveHtml = cell.running && cell.live_output
+    ? `<div class="cell-live-out"><pre>${esc(cell.live_output)}</pre></div>`
+    : "";
   const dirtyAttr = cell._dirty ? ' data-dirty="1"' : "";
   const srcCls = srcCollapsed ? " src-collapsed" : "";
   const outCls = outCollapsed ? " out-collapsed" : "";
@@ -753,6 +760,7 @@ function codeCell(idx, cell) {
     </div>
     <div class="cm-host" data-cell="${idx}"></div>
     ${srcPreview}
+    ${liveHtml}
     ${outHtml}
   </div>`;
 }

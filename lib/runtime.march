@@ -204,7 +204,7 @@ fn write_cells(session_id, proc, cells, run_through_idx) do
   Ok(skip_count)
 end
 
--- ── Output polling ────────────────────────────────────────────────────────────
+-- ── Output polling / live streaming ─────────────────────────────────────────
 
 pfn sentinel() do "__SCROLL_DONE__" end
 
@@ -291,6 +291,48 @@ fn poll_result(session_id) do
                     end
                   Some((combined, None))
               end
+          end
+      end
+  end
+end
+
+-- Return whatever the target cell has printed so far, even before it finishes.
+-- Used to stream intermediate output to the browser while a cell is running.
+-- Returns None if context cells haven't finished yet (nothing to show),
+-- Some(partial) otherwise — partial may be an empty string.
+fn poll_live(session_id) do
+  match Vault.ns_get(rt_ns(), rt_skip_key(session_id)) do
+    None -> None
+    Some(skip_s) ->
+      let skip = match String.to_int(skip_s) do Ok(n) -> n | Err(_) -> 0 end
+      let outp = rt_out_path(session_id)
+      match File.read(outp) do
+        Err(_) -> None
+        Ok(content) ->
+          let cell_out_start_opt =
+            if skip == 0 do Some(0)
+            else
+              match find_nth_sentinel(content, skip - 1) do
+                None -> None
+                Some((_, after)) -> Some(after)
+              end
+            end
+          match cell_out_start_opt do
+            None -> None
+            Some(out_start) ->
+              let remaining = String.slice(content, out_start,
+                                          String.byte_size(content) - out_start)
+              -- Strip everything from the sentinel onward (cell may have just finished).
+              let live = match String.split_first(remaining, sentinel() ++ "\n") do
+                None -> remaining
+                Some((before, _)) -> before
+              end
+              -- Drop trailing newline for cleaner display.
+              let live = if String.ends_with(live, "\n") do
+                String.slice(live, 0, String.byte_size(live) - 1)
+              else live
+              end
+              Some(live)
           end
       end
   end

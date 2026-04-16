@@ -141,7 +141,14 @@ mod Session do
         Some(idx) -> do
           match Processes.check_run_proc(idx, nb_path) do
           None -> do
-            WebSocket.send_frame(socket, TextFrame("{\"type\":\"still_running\",\"index\":" ++ String.from_int(idx) ++ "}"))
+            let live = match Processes.live_run_proc(nb_path) do
+              None -> ""
+              Some(s) -> s
+            end
+            WebSocket.send_frame(socket, TextFrame(
+              "{\"type\":\"still_running\",\"index\":" ++ String.from_int(idx) ++
+              ",\"live\":" ++ json_str(live) ++ "}"
+            ))
           end
           Some((out, err_opt, vars)) -> do
             let add_results = Runner.process_forge_adds(out, nb_path)
