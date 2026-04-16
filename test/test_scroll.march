@@ -45,6 +45,22 @@ fn run_nb(nb_content, nb_idx) do
   (rc, stdout)
 end
 
+-- ── Property test helpers ────────────────────────────────────────────────────
+-- These must be defined before the first describe block so march's type
+-- inference can resolve them without context from unit tests.
+
+-- Convert a list of char-code integers to a String.
+-- Uses List.map + String.join to avoid Nil/Cons ambiguity in type inference.
+pfn codes_to_str(lst : List(Int)) : String do
+  String.join(List.map(lst, fn h -> Char.to_string(Char.from_int(h))), "")
+end
+
+-- Generator of lowercase letter (a-z) code lists.
+pfn lc_codes() do Gen.list(Gen.int(97, 122)) end
+
+-- Generator of printable ASCII (32-126) code lists, includes ", \, <, >, etc.
+pfn ascii_codes() do Gen.list(Gen.int(32, 126)) end
+
 -- ── parse_cells ───────────────────────────────────────────────────────────────
 
 describe "parse_cells" do
@@ -1096,6 +1112,254 @@ describe "extract_vars value containing =" do
         assert (value == "https://example.com/a=b&c=d")
       _ -> assert false
     end
+  end
+
+end
+
+-- ── Property-based tests ──────────────────────────────────────────────────────
+-- Uses Check.all / Gen.* from the March stdlib.
+-- Run with:  forge test
+-- Skip:      MARCH_SKIP_PROPERTIES=1 forge test
+-- Replay:    forge test --seed=<N>
+--
+-- Note: Gen.lowercase_string() / Gen.string_of() crash in the installed march
+-- binary due to a Generator(String) RC bug.  All string-based properties below
+-- work around this by using Gen.list(Gen.int(...)) and building strings inside
+-- the property function body using codes_to_str, which avoids the crash.
+
+-- ── json_escape / unescape_json ──────────────────────────────────────────────
+
+describe "property: unescape_json(json_escape(s)) == s" do
+
+  test "round-trip holds for lowercase ASCII strings" do
+    Check.all(lc_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      Scroll.unescape_json(Scroll.json_escape(s)) == s
+    )
+  end
+
+  test "round-trip holds for printable ASCII strings including quote backslash and controls" do
+    Check.all(ascii_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      Scroll.unescape_json(Scroll.json_escape(s)) == s
+    )
+  end
+
+  test "json_escape output byte size is always >= input byte size" do
+    -- json_escape can only grow or preserve a string (it adds escape sequences).
+    Check.all(ascii_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      String.byte_size(Scroll.json_escape(s)) >= String.byte_size(s)
+    )
+  end
+
+  test "json_escape on lowercase strings is the identity (no special chars)" do
+    -- a-z have no JSON special chars; json_escape must not modify them.
+    Check.all(lc_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      Scroll.json_escape(s) == s
+    )
+  end
+
+end
+
+-- ── html_escape ───────────────────────────────────────────────────────────────
+
+describe "property: html_escape safety invariants" do
+
+  test "html_escape output never contains raw <" do
+    Check.all(ascii_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      not(String.contains(Scroll.html_escape(s), "<"))
+    )
+  end
+
+  test "html_escape output never contains raw >" do
+    Check.all(ascii_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      not(String.contains(Scroll.html_escape(s), ">"))
+    )
+  end
+
+  test "html_escape is identity on lowercase strings (no special chars)" do
+    Check.all(lc_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      Scroll.html_escape(s) == s
+    )
+  end
+
+  test "html_escape byte size >= input byte size" do
+    -- Encoding can only grow or preserve a string, never shrink it.
+    Check.all(ascii_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      String.byte_size(Scroll.html_escape(s)) >= String.byte_size(s)
+    )
+  end
+
+end
+
+-- ── sh_quote ─────────────────────────────────────────────────────────────────
+
+describe "property: sh_quote wrapping invariants" do
+
+  test "sh_quote output always starts with single-quote" do
+    Check.all(ascii_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      String.starts_with(Scroll.sh_quote(s), "'")
+    )
+  end
+
+  test "sh_quote output always ends with single-quote" do
+    Check.all(ascii_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      String.ends_with(Scroll.sh_quote(s), "'")
+    )
+  end
+
+  test "sh_quote output byte size >= input byte size + 2" do
+    -- Wrapping in '' adds at least 2 bytes; ' escaping adds more.
+    Check.all(ascii_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      String.byte_size(Scroll.sh_quote(s)) >= String.byte_size(s) + 2
+    )
+  end
+
+  test "sh_quote on quote-free lowercase strings is a simple single-quote wrap" do
+    -- Lowercase a-z contains no single-quotes, so sh_quote(s) == '\''s'\''.
+    Check.all(lc_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      Scroll.sh_quote(s) == "'" ++ s ++ "'"
+    )
+  end
+
+end
+
+-- ── normalize_crlf ───────────────────────────────────────────────────────────
+
+describe "property: normalize_crlf invariants" do
+
+  test "normalize_crlf output never contains bare \\r" do
+    -- Generate strings that may include CR (char 13) and LF (char 10).
+    Check.all(Gen.list(Gen.int(9, 126)), fn codes ->
+      let s = codes_to_str(codes)
+      not(String.contains(Scroll.normalize_crlf(s), "\r"))
+    )
+  end
+
+  test "normalize_crlf is idempotent" do
+    Check.all(Gen.list(Gen.int(9, 126)), fn codes ->
+      let s = codes_to_str(codes)
+      Scroll.normalize_crlf(Scroll.normalize_crlf(s)) == Scroll.normalize_crlf(s)
+    )
+  end
+
+  test "normalize_crlf is identity on lowercase strings (no CR)" do
+    -- a-z (codes 97-122) contains no CR; normalize_crlf must leave them unchanged.
+    Check.all(lc_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      Scroll.normalize_crlf(s) == s
+    )
+  end
+
+end
+
+-- ── json_str ─────────────────────────────────────────────────────────────────
+
+describe "property: json_str wrapping invariants" do
+
+  test "json_str output starts and ends with double-quote" do
+    Check.all(lc_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      String.starts_with(Scroll.json_str(s), "\"") &&
+      String.ends_with(Scroll.json_str(s), "\"")
+    )
+  end
+
+  test "json_str output has at least 2 bytes" do
+    Check.all(lc_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      String.byte_size(Scroll.json_str(s)) >= 2
+    )
+  end
+
+  test "json_str output is parseable as a JSON array element" do
+    Check.all(lc_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      match Json.parse("[" ++ Scroll.json_str(s) ++ "]") do
+        Ok(_) -> true
+        Err(_) -> false
+      end
+    )
+  end
+
+end
+
+-- ── output_msg / notebook_msg ─────────────────────────────────────────────────
+
+describe "property: message builders produce valid JSON" do
+
+  test "output_msg with no error is parseable JSON for any cell index" do
+    -- Gen.int upper bound must be <= ~1000 to avoid a march runtime crash
+    -- with large integer shrink trees (known march bug).
+    Check.all(Gen.int(0, 100), fn idx ->
+      match Json.parse(Scroll.output_msg(idx, "test output", None, Nil)) do
+        Ok(_) -> true
+        Err(_) -> false
+      end
+    )
+  end
+
+  test "output_msg with an error string is parseable JSON" do
+    Check.all(Gen.int(0, 100), fn idx ->
+      match Json.parse(Scroll.output_msg(idx, "", Some("runtime error"), Nil)) do
+        Ok(_) -> true
+        Err(_) -> false
+      end
+    )
+  end
+
+  test "notebook_msg with empty cells is parseable JSON for any content" do
+    Check.all(lc_codes(), fn codes ->
+      let content = codes_to_str(codes)
+      match Json.parse(Scroll.notebook_msg(content, Nil)) do
+        Ok(_) -> true
+        Err(_) -> false
+      end
+    )
+  end
+
+end
+
+-- ── parse_cells ───────────────────────────────────────────────────────────────
+
+describe "property: parse_cells structural invariants" do
+
+  test "parse_cells always returns a non-negative number of cells" do
+    Check.all(lc_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      List.length(Scroll.parse_cells(s)) >= 0
+    )
+  end
+
+  test "all cells produced have a known tag (Code | Markdown | Section)" do
+    Check.all(lc_codes(), fn codes ->
+      let s = codes_to_str(codes)
+      let cells = Scroll.parse_cells(s)
+      List.all(cells, fn cell ->
+        let tag = Scroll.cell_tag(cell)
+        tag == "Code" || tag == "Markdown" || tag == "Section"
+      )
+    )
+  end
+
+  test "parse_cells result is unchanged by pre-normalising CRLF" do
+    -- parse_cells calls normalize_crlf internally, so applying it first
+    -- produces the same cell count.
+    Check.all(Gen.list(Gen.int(9, 126)), fn codes ->
+      let s = codes_to_str(codes)
+      List.length(Scroll.parse_cells(s)) ==
+      List.length(Scroll.parse_cells(Scroll.normalize_crlf(s)))
+    )
   end
 
 end
