@@ -41,9 +41,9 @@ fn log_start(nb_path)                   do DebugLog.start_log(nb_path) end
 fn log_append(cat, msg)                 do DebugLog.append(cat, msg) end
 fn log_read_all()                       do DebugLog.read_all() end
 fn log_get_path()                       do DebugLog.get_path() end
-fn stop_run_proc(idx)                   do Processes.stop_run_proc(idx) end
-fn start_run_proc(cells, idx, bin, env)  do Processes.start_run_proc(cells, idx, bin, env) end
-fn check_run_proc(idx)                  do Processes.check_run_proc(idx) end
+fn stop_run_proc(nb_path)                          do Processes.stop_run_proc(nb_path) end
+fn start_run_proc(cells, idx, bin, env, nb_path)   do Processes.start_run_proc(cells, idx, bin, env, nb_path) end
+fn check_run_proc(idx, nb_path)                    do Processes.check_run_proc(idx, nb_path) end
 
 -- ── Asset serving ─────────────────────────────────────────────────────────────
 -- Assets live under <archive_root>/assets/.  At runtime we discover the

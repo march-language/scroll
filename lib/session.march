@@ -47,6 +47,7 @@ mod Session do
 
   -- ── Message dispatcher ────────────────────────────────────────────────────────
   -- Returns the (possibly updated) nb_path so save_as can change it.
+  -- nb_path doubles as the session ID for the persistent REPL runtime.
   pfn handle_ws_msg(msg, nb_path, march_bin, socket) do
     match Json.parse(msg) do
     Err(_) -> do WebSocket.send_frame(socket, err_frame("invalid JSON")) nb_path end
@@ -120,11 +121,11 @@ mod Session do
           Err(e) -> WebSocket.send_frame(socket, err_frame(to_string(e)))
           Ok(content) -> do
             let cells = parse_cells(content)
-            match Processes.start_run_proc(cells, idx, march_bin, env_str) do
+            match Processes.start_run_proc(cells, idx, march_bin, env_str, nb_path) do
             Err(msg) -> do
               WebSocket.send_frame(socket, TextFrame(output_msg(idx, "", Some(msg), [])))
             end
-            Ok(_pid) -> do
+            Ok(_sid) -> do
               WebSocket.send_frame(socket, TextFrame("{\"type\":\"running\",\"index\":" ++ String.from_int(idx) ++ "}"))
             end
             end
@@ -138,7 +139,7 @@ mod Session do
         match json_get_int(jv, "index") do
         None -> WebSocket.send_frame(socket, err_frame("missing index"))
         Some(idx) -> do
-          match Processes.check_run_proc(idx) do
+          match Processes.check_run_proc(idx, nb_path) do
           None -> do
             WebSocket.send_frame(socket, TextFrame("{\"type\":\"still_running\",\"index\":" ++ String.from_int(idx) ++ "}"))
           end
@@ -157,7 +158,7 @@ mod Session do
         match json_get_int(jv, "index") do
         None -> WebSocket.send_frame(socket, err_frame("missing index"))
         Some(idx) -> do
-          Processes.stop_run_proc(idx)
+          Processes.stop_run_proc(nb_path)
           WebSocket.send_frame(socket, TextFrame(output_msg(idx, "", Some("interrupted"), [])))
         end
         end

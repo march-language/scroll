@@ -1,0 +1,299 @@
+-- runtime.march — Persistent March REPL management for notebook sessions.
+--
+-- Instead of spawning a fresh OS process per cell run, Runtime maintains one
+-- long-lived `march repl` process per notebook path.  Cell source is written
+-- to the REPL's stdin; output is captured in a temp file and polled for a
+-- completion sentinel emitted by MARCH_SCROLL_MODE=1.
+--
+-- Execution model for "run cell N":
+--   1. start_or_reuse the REPL process (spawned once, reused across cells)
+--   2. Write `:reset` to clear prior state, then write all code cells 0..N
+--      to stdin in sequence — the REPL evaluates them one by one.
+--   3. Each evaluation emits `__SCROLL_DONE__` to the output file.
+--      We wait for (1 + code_cells_before_N + 1) sentinels:
+--        sentinel 0  = `:reset` acknowledgement
+--        sentinels 1..M = cells 0..N-1 (context; output ignored)
+--        sentinel M+1   = cell N (the output we show the user)
+--   4. poll_result extracts the output between sentinel M and M+1.
+--
+-- The REPL process persists between cell runs so actors spawned in one cell
+-- remain alive across subsequent cell evaluations in the same session.
+--
+-- Public API (fn):
+--   start_runtime/3        : start (or reuse) the REPL for a session
+--   write_cells/4          : feed cells 0..run_through_idx to REPL stdin
+--   poll_result/2          : check whether the target cell is done
+--   stop_runtime/1         : kill the REPL and clean up Vault entries
+
+mod Runtime do
+
+pfn trim(s) do String.trim(s) end
+
+-- Shell-quote a single token for safe interpolation into sh -c.
+pfn sh_quote(s) do
+  "'" ++ String.replace_all(s, "'", "'\\''") ++ "'"
+end
+
+-- Vault namespace and key helpers.
+pfn rt_ns()              do "__scroll_rt__" end
+pfn rt_proc_key(sid)     do sid ++ ":proc" end
+pfn rt_out_key(sid)      do sid ++ ":out" end
+pfn rt_skip_key(sid)     do sid ++ ":skip" end
+
+-- Replace path separators so the session ID can be used as a filename.
+pfn sanitize_sid(sid)    do String.replace_all(sid, "/", "_") end
+
+-- File paths for the REPL's captured output.
+pfn rt_out_path(sid)     do "/tmp/__scroll_rt_" ++ sanitize_sid(sid) ++ ".out" end
+pfn rt_err_path(sid)     do "/tmp/__scroll_rt_" ++ sanitize_sid(sid) ++ ".err" end
+
+-- Encode / decode a LiveProcess as "pid:sid" for Vault storage.
+pfn encode_proc(proc) do
+  match proc do
+    LiveProcess(pid, sid) ->
+      String.from_int(pid) ++ ":" ++ String.from_int(sid)
+  end
+end
+
+pfn decode_proc(s) do
+  match String.split_first(s, ":") do
+    None -> None
+    Some((pid_s, sid_s)) ->
+      match (String.to_int(pid_s), String.to_int(sid_s)) do
+        (Ok(pid), Ok(sid)) -> Some(LiveProcess(pid, sid))
+        _ -> None
+      end
+  end
+end
+
+-- ── Process lifecycle ─────────────────────────────────────────────────────────
+
+-- Return an already-running REPL proc, or None.
+pfn get_proc(session_id) do
+  match Vault.ns_get(rt_ns(), rt_proc_key(session_id)) do
+    None -> None
+    Some(s) -> decode_proc(s)
+  end
+end
+
+-- Build the shell env-prefix from newline-separated KEY=VALUE pairs.
+pfn env_prefix(env_str) do
+  if String.is_empty(trim(env_str)) do ""
+  else
+    let lines = List.filter(String.split(env_str, "\n"), fn l -> not(String.is_empty(trim(l))))
+    let exports = List.filter_map(lines, fn line ->
+      match String.split_first(line, "=") do
+        None -> None
+        Some((k, v)) ->
+          let k = trim(k)
+          -- Basic guard: only export if key looks like an identifier.
+          if String.is_empty(k) do None
+          else Some("export " ++ sh_quote(k) ++ "=" ++ sh_quote(v) ++ "; ")
+          end
+      end
+    )
+    String.join(exports, "")
+  end
+end
+
+-- Start a new REPL process for session_id.  Kills any existing one first.
+-- The REPL's stdout/stderr are redirected to temp files so we can poll them.
+-- We use `exec` so the shell is replaced by the REPL process itself, meaning
+-- the LiveProcess handle gives us the REPL's PID directly.
+fn start_runtime(session_id, march_bin, env_str) do
+  -- Kill any existing REPL for this session.
+  match get_proc(session_id) do
+    None -> ()
+    Some(proc) ->
+      let _ = Process.kill(proc)
+      let _ = Vault.ns_drop(rt_ns(), rt_proc_key(session_id))
+      ()
+  end
+
+  let outp = rt_out_path(session_id)
+  let errp = rt_err_path(session_id)
+  let _ = File.write(outp, "")
+  let _ = File.write(errp, "")
+
+  let ep = env_prefix(env_str)
+  -- MARCH_SCROLL_MODE=1 activates the __SCROLL_DONE__ sentinel in run_simple.
+  -- MARCH_REPL_INTERP=1 forces interpreter mode (no JIT) for faster startup.
+  -- We use `export` before `exec` because exec in POSIX sh does not accept
+  -- inline KEY=val assignments the way a normal command invocation does.
+  let shell = ep ++ "export MARCH_SCROLL_MODE=1; export MARCH_REPL_INTERP=1; exec " ++
+              sh_quote(march_bin) ++ " repl >" ++ outp ++ " 2>" ++ errp
+
+  match Process.spawn_async("sh", ["-c", shell]) do
+    Err(msg) -> Err("failed to start runtime: " ++ msg)
+    Ok(proc) ->
+      let _ = Vault.ns_set(rt_ns(), rt_proc_key(session_id), encode_proc(proc))
+      Ok(proc)
+  end
+end
+
+-- Kill the REPL and remove all Vault entries for this session.
+fn stop_runtime(session_id) do
+  match get_proc(session_id) do
+    None -> ()
+    Some(proc) ->
+      let _ = Process.kill(proc)
+      let _ = Process.wait_proc(proc)
+      ()
+  end
+  let _ = Vault.ns_drop(rt_ns(), rt_proc_key(session_id))
+  let _ = Vault.ns_drop(rt_ns(), rt_out_key(session_id))
+  let _ = Vault.ns_drop(rt_ns(), rt_skip_key(session_id))
+  ()
+end
+
+-- ── Cell feeding ──────────────────────────────────────────────────────────────
+
+-- Write each source string to the REPL stdin via a recursive loop so the
+-- compiler cannot eliminate the side-effectful Process.write calls.
+pfn send_all(proc, srcs) do
+  match srcs do
+    Nil -> ()
+    Cons(src, rest) ->
+      let _ = Process.write(proc, src ++ "\n")
+      send_all(proc, rest)
+  end
+end
+
+-- Collect sources of all Code cells from 0 to run_through_idx (inclusive).
+-- Returns the list of sources in order, plus the code-cell index of the
+-- target cell (the one at run_through_idx).
+pfn collect_code_sources(cells, run_through_idx) do
+  fn go(cells, srcs_rev, code_n, total_n) do
+    if total_n > run_through_idx do
+      (List.reverse(srcs_rev), code_n - 1)
+    else
+      match cells do
+        Nil -> (List.reverse(srcs_rev), code_n - 1)
+        Cons(Markdown(_), rest) -> go(rest, srcs_rev, code_n, total_n + 1)
+        Cons(Section(_),  rest) -> go(rest, srcs_rev, code_n, total_n + 1)
+        Cons(Code(src),   rest) ->
+          go(rest, Cons(src, srcs_rev), code_n + 1, total_n + 1)
+      end
+    end
+  end
+  go(cells, Nil, 0, 0)
+end
+
+-- Send :reset and then all code cells 0..run_through_idx to the REPL stdin.
+-- Records in Vault how many __SCROLL_DONE__ sentinels to skip before we
+-- reach the target cell's output.
+--
+-- Returns Ok(skip_count) where skip_count is the number of sentinels before
+-- the target cell's output (1 for :reset + one per prior code cell).
+fn write_cells(session_id, proc, cells, run_through_idx) do
+  -- Reset the REPL's accumulated state.
+  let _ = Process.write(proc, ":reset\n")
+
+  let (srcs, _target_code_n) = collect_code_sources(cells, run_through_idx)
+
+  -- Feed all cell sources; the REPL evaluates each, emitting __SCROLL_DONE__
+  -- after every one.  We don't need to wait between them — the pipe buffers.
+  send_all(proc, srcs)
+
+  -- skip_count = 1 (:reset sentinel) + (number of code cells - 1 for all but
+  -- the target cell).  The last sentinel in srcs belongs to the target cell.
+  let num_code_cells = List.length(srcs)
+  let skip_count = 1 + (num_code_cells - 1)
+  let _ = Vault.ns_set(rt_ns(), rt_skip_key(session_id), String.from_int(skip_count))
+  let _ = Vault.ns_set(rt_ns(), rt_out_key(session_id), rt_out_path(session_id))
+  Ok(skip_count)
+end
+
+-- ── Output polling ────────────────────────────────────────────────────────────
+
+pfn sentinel() do "__SCROLL_DONE__" end
+
+-- Find the Nth occurrence of `sentinel` in `s` (0-indexed).
+-- Returns Some(end_position_after_sentinel) or None if fewer than N+1 found.
+pfn find_nth_sentinel(s, n) do
+  let sep = sentinel() ++ "\n"
+  fn go(remaining, count, offset) do
+    match String.split_first(remaining, sep) do
+      None -> None
+      Some((before, after)) ->
+        let consumed = String.byte_size(before) + String.byte_size(sep)
+        if count >= n do
+          Some((offset + String.byte_size(before), offset + consumed))
+        else
+          go(after, count + 1, offset + consumed)
+        end
+    end
+  end
+  go(s, 0, 0)
+end
+
+-- Poll for the target cell's output.
+-- Returns None if still running, Some((output, err_opt)) when done.
+--
+-- Sentinel layout in the output file for M total code cells:
+--   sentinel 0       : :reset acknowledgement
+--   sentinels 1..M-1 : context cells 0..M-2 (output ignored)
+--   sentinel M       : target cell (output we show the user)
+--
+-- skip = M.  The target cell output lies between sentinel (M-1) and sentinel M.
+-- We locate the end of sentinel (skip-1), then find the next sentinel from there.
+fn poll_result(session_id) do
+  match Vault.ns_get(rt_ns(), rt_skip_key(session_id)) do
+    None -> Some(("", Some("no active run for this session")))
+    Some(skip_s) ->
+      let skip = match String.to_int(skip_s) do Ok(n) -> n | Err(_) -> 0 end
+      let outp = rt_out_path(session_id)
+      match File.read(outp) do
+        Err(_) -> None
+        Ok(content) ->
+          -- Locate the start of the target cell's output.
+          -- It begins immediately after sentinel (skip-1).
+          -- Special case: skip=0 means no prefix sentinels (output starts at byte 0).
+          let cell_out_start_opt =
+            if skip == 0 do
+              Some(0)
+            else
+              match find_nth_sentinel(content, skip - 1) do
+                None -> None  -- context cells still running
+                Some((_, after_prev_sentinel)) -> Some(after_prev_sentinel)
+              end
+            end
+          match cell_out_start_opt do
+            None -> None  -- still waiting for context cells to finish
+            Some(out_start) ->
+              let remaining = String.slice(content, out_start,
+                                          String.byte_size(content) - out_start)
+              -- Find the first sentinel in the remaining content — that marks
+              -- the END of the target cell's output.
+              match find_nth_sentinel(remaining, 0) do
+                None -> None  -- target cell still running
+                Some((cell_out_end, _)) ->
+                  let raw_out = String.slice(remaining, 0, cell_out_end)
+                  -- Drop trailing newline that println emits before the sentinel.
+                  let out = if String.ends_with(raw_out, "\n") do
+                    String.slice(raw_out, 0, String.byte_size(raw_out) - 1)
+                  else raw_out
+                  end
+                  -- Also surface any stderr that accumulated.
+                  let errp = rt_err_path(session_id)
+                  let err_raw = match File.read(errp) do Ok(s) -> trim(s) | Err(_) -> "" end
+                  let combined =
+                    if String.is_empty(err_raw) do out
+                    else
+                      let sep = if String.is_empty(out) do "" else "\n" end
+                      out ++ sep ++ "[stderr]\n" ++ err_raw
+                    end
+                  -- Cap at 64 KB to match the subprocess model.
+                  let combined =
+                    if String.byte_size(combined) > 65536 do
+                      String.slice(combined, 0, 65536) ++ "\n[output truncated at 64 KB]"
+                    else combined
+                    end
+                  Some((combined, None))
+              end
+          end
+      end
+  end
+end
+
+end
