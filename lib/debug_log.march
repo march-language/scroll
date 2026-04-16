@@ -1,0 +1,50 @@
+mod DebugLog do
+
+  pfn log_ns() do "__scroll_log__" end
+  pfn path_key() do "path" end
+
+  pfn sh_quote(s) do
+    "'" ++ String.replace_all(s, "'", "'\\''") ++ "'"
+  end
+
+  pfn log_path() do
+    match Vault.ns_get(log_ns(), path_key()) do
+      Some(p) -> p
+      None -> "/tmp/scroll_debug.log"
+    end
+  end
+
+  fn start_log(nb_path) do
+    let pid = String.from_int(System.pid())
+    let p = "/tmp/scroll_" ++ pid ++ "_debug.log"
+    let _ = Vault.ns_set(log_ns(), path_key(), p)
+    let _ = File.write(p, "")
+    append("log", "session started for " ++ nb_path)
+    p
+  end
+
+  fn append(category, message) do
+    let ts = timestamp()
+    let line = ts ++ " [" ++ category ++ "] " ++ message
+    let path = log_path()
+    let _ = Process.run("sh", ["-c", "echo " ++ sh_quote(line) ++ " >> " ++ sh_quote(path)])
+    ()
+  end
+
+  fn read_all() do
+    match File.read(log_path()) do
+      Ok(s) -> s
+      Err(_) -> ""
+    end
+  end
+
+  fn get_path() do log_path() end
+
+  pfn timestamp() do
+    match Process.run("date", ["+%H:%M:%S"]) do
+      Ok(r) -> String.trim(Process.stdout(r))
+      Err(_) -> "??:??:??"
+    end
+  end
+
+end

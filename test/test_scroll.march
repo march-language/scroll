@@ -869,36 +869,61 @@ end
 describe "ui_html" do
 
   test "includes DOCTYPE and html shell" do
-    let html = Scroll.ui_html("notebook.scrollmd", 4040)
+    let html = Scroll.ui_html("notebook.scrollmd", 4040, false)
     assert (String.contains(html, "<!DOCTYPE html>"))
     assert (String.contains(html, "<html"))
     assert (String.contains(html, "</html>"))
   end
 
   test "references css asset at expected path" do
-    let html = Scroll.ui_html("nb.scrollmd", 4040)
+    let html = Scroll.ui_html("nb.scrollmd", 4040, false)
     assert (String.contains(html, "/assets/css/scroll.css"))
   end
 
   test "references js assets at expected paths" do
-    let html = Scroll.ui_html("nb.scrollmd", 4040)
+    let html = Scroll.ui_html("nb.scrollmd", 4040, false)
     assert (String.contains(html, "/assets/js/scroll.js"))
     assert (String.contains(html, "/assets/js/editor.js"))
   end
 
   test "embeds nb_path as data attribute" do
-    let html = Scroll.ui_html("foo.scrollmd", 4040)
+    let html = Scroll.ui_html("foo.scrollmd", 4040, false)
     assert (String.contains(html, "data-nb-path=\"foo.scrollmd\""))
   end
 
   test "embeds port as data attribute" do
-    let html = Scroll.ui_html("n", 4443)
+    let html = Scroll.ui_html("n", 4443, false)
     assert (String.contains(html, "data-ws-port=\"4443\""))
   end
 
   test "includes toolbar with run button" do
-    let html = Scroll.ui_html("n", 4040)
+    let html = Scroll.ui_html("n", 4040, false)
     assert (String.contains(html, "id=\"btn-run-all\""))
+  end
+
+  test "includes data-is-temp when is_temp is true" do
+    let html = Scroll.ui_html("n", 4040, true)
+    assert (String.contains(html, "data-is-temp=\"1\""))
+  end
+
+  test "omits data-is-temp when is_temp is false" do
+    let html = Scroll.ui_html("n", 4040, false)
+    assert (not(String.contains(html, "data-is-temp")))
+  end
+
+  test "includes save-as modal" do
+    let html = Scroll.ui_html("n", 4040, false)
+    assert (String.contains(html, "id=\"saveas-modal\""))
+  end
+
+  test "includes env panel" do
+    let html = Scroll.ui_html("n", 4040, false)
+    assert (String.contains(html, "id=\"env-modal\""))
+  end
+
+  test "includes log panel" do
+    let html = Scroll.ui_html("n", 4040, false)
+    assert (String.contains(html, "id=\"log-panel\""))
   end
 
 end
@@ -1004,7 +1029,7 @@ describe "start_run_proc + check_run_proc" do
 
   test "runs a simple cell end-to-end and reports output" do
     let cells = Scroll.parse_cells("```march\n40 + 2\n```")
-    match Scroll.start_run_proc(cells, 0, "march") do
+    match Scroll.start_run_proc(cells, 0, "march", "") do
       Err(msg) -> do
         IO.puts("start_run_proc failed: " ++ msg)
         assert false
@@ -1026,7 +1051,7 @@ describe "start_run_proc + check_run_proc" do
 
   test "reports error on syntax-broken cell" do
     let cells = Scroll.parse_cells("```march\n@@@ bad @@@\n```")
-    match Scroll.start_run_proc(cells, 0, "march") do
+    match Scroll.start_run_proc(cells, 0, "march", "") do
       Err(_) -> assert true
       Ok(_pid) -> do
         match wait_for_run(0, 60) do
@@ -1050,7 +1075,7 @@ describe "start_run_proc + check_run_proc" do
   test "returns error when idx points to markdown before any code" do
     let cells = Scroll.parse_cells("# Title\n\n```march\n42\n```")
     -- overall idx 0 is the Markdown cell; no code cell has been seen yet
-    match Scroll.start_run_proc(cells, 0, "march") do
+    match Scroll.start_run_proc(cells, 0, "march", "") do
       Err(_) -> assert true
       Ok(_) -> assert false
     end
@@ -1063,7 +1088,7 @@ describe "start_server_proc" do
   test "starts and stops a server cell process" do
     -- Long-running server: invoke sleep via Process.run so the March process stays alive.
     let src = "let _ = Process.run(\"sh\", [\"-c\", \"sleep 10\"])"
-    match Scroll.start_server_proc(src, 8888, "march") do
+    match Scroll.start_server_proc(src, 8888, "march", "") do
       Err(_msg) -> assert false
       Ok(_pid) -> do
         -- Give march a moment to start up before checking.

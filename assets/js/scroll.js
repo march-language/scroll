@@ -19,8 +19,9 @@ document.addEventListener('DOMContentLoaded', function() {
   });
 });
 
-const NB_PATH = document.body.dataset.nbPath;
+let NB_PATH = document.body.dataset.nbPath;
 const WS_URL  = "ws://" + location.hostname + ":" + document.body.dataset.wsPort + "/ws";
+let IS_TEMP = !!document.body.dataset.isTemp;
 
 let cells = [];   // [{kind, source, output, error, running, server_log, pid}]
 let ws = null;
@@ -110,6 +111,18 @@ function handleMsg(msg) {
   } else if (msg.type === "saved") {
     setStatus("ok", "saved");
     setTimeout(() => setStatus("ok", "connected"), 1500);
+  } else if (msg.type === "saved_as") {
+    const oldVars = loadEnvVars();
+    NB_PATH = msg.path;
+    IS_TEMP = false;
+    if (oldVars.length > 0) saveEnvVars(oldVars);
+    document.body.dataset.nbPath = msg.path;
+    delete document.body.dataset.isTemp;
+    document.getElementById("nb-title").textContent = msg.title || msg.path;
+    document.title = "March Notebook — " + (msg.title || msg.path);
+    closeSaveAs();
+    setStatus("ok", "saved as " + msg.title);
+    setTimeout(() => setStatus("ok", "connected"), 2000);
   } else if (msg.type === "server_started") {
     const idx = msg.index;
     if (cells[idx]) {
@@ -150,6 +163,11 @@ function handleMsg(msg) {
       updateCell(idx);
     }
     setStatus("err", msg.message);
+  } else if (msg.type === "log_content") {
+    const body = document.getElementById("log-body");
+    const pathEl = document.getElementById("log-path");
+    if (body) { body.textContent = msg.content || "(empty)"; body.scrollTop = body.scrollHeight; }
+    if (pathEl && msg.path) pathEl.textContent = msg.path;
   } else if (msg.type === "dep_added") {
     showToast("Package installed: " + msg.name, "ok");
   } else if (msg.type === "dep_error") {
@@ -157,6 +175,12 @@ function handleMsg(msg) {
   } else if (msg.type === "error") {
     setStatus("err", msg.message);
     if (pendingRun !== null) { pendingRun = null; }
+    const saveAsModal = document.getElementById("saveas-modal");
+    if (saveAsModal && saveAsModal.style.display !== "none") {
+      const errEl = document.getElementById("saveas-error");
+      errEl.textContent = msg.message;
+      errEl.style.display = "block";
+    }
   }
 }
 
@@ -200,7 +224,8 @@ function stopServerPoll(idx) {
 function startServer(idx) {
   if (cells[idx] && cells[idx].kind === "server") {
     send({type:"save", content: nbSource()});
-    send({type:"start_server", index:idx});
+    const env = getEnvString();
+    send({type:"start_server", index:idx, env: env || undefined});
     setStatus("running", "starting…");
   }
 }
@@ -230,7 +255,8 @@ function nbSource() {
 function runCell(idx) {
   if (cells[idx] && cells[idx].kind === "code") {
     send({type:"save", content: nbSource()});
-    send({type:"run", index:idx});
+    const env = getEnvString();
+    send({type:"run", index:idx, env: env || undefined});
   }
 }
 
@@ -307,7 +333,127 @@ function isPotentiallyLongRunning(src) {
 }
 
 function saveNotebook() {
+  if (IS_TEMP) { openSaveAs(); return; }
   send({type:"save", content: nbSource()});
+}
+
+function openSaveAs() {
+  const modal = document.getElementById("saveas-modal");
+  const inp = document.getElementById("saveas-path");
+  const errEl = document.getElementById("saveas-error");
+  errEl.style.display = "none";
+  if (!inp.value) {
+    const name = cells.length > 0 && cells[0].kind === "markdown"
+      ? cells[0].source.replace(/^#\s+/, "").trim().replace(/[^a-zA-Z0-9_-]/g, "_").slice(0, 40) || "notebook"
+      : "notebook";
+    inp.value = name + ".scrollmd";
+  }
+  modal.style.display = "flex";
+  inp.focus();
+  inp.select();
+}
+
+function closeSaveAs() {
+  document.getElementById("saveas-modal").style.display = "none";
+}
+
+function confirmSaveAs() {
+  const inp = document.getElementById("saveas-path");
+  const errEl = document.getElementById("saveas-error");
+  let path = inp.value.trim();
+  if (!path) { errEl.textContent = "Path cannot be empty"; errEl.style.display = "block"; return; }
+  const basename = path.split("/").pop();
+  if (!basename.includes(".")) path += ".scrollmd";
+  send({type:"save_as", path: path, content: nbSource()});
+  setStatus("running", "saving…");
+}
+
+// ── Environment variables ────────────────────────────────────────────────────
+
+function envStorageKey() { return "scroll-env:" + NB_PATH; }
+
+function loadEnvVars() {
+  try { return JSON.parse(localStorage.getItem(envStorageKey())) || []; }
+  catch(e) { return []; }
+}
+
+function saveEnvVars(vars) {
+  localStorage.setItem(envStorageKey(), JSON.stringify(vars));
+}
+
+function getEnvString() {
+  return loadEnvVars().filter(v => v.key && v.enabled !== false)
+    .map(v => v.key + "=" + v.value).join("\n");
+}
+
+function openEnvPanel() {
+  const modal = document.getElementById("env-modal");
+  modal.style.display = "flex";
+  renderEnvRows();
+}
+
+function closeEnvPanel() {
+  collectEnvFromDOM();
+  document.getElementById("env-modal").style.display = "none";
+}
+
+function renderEnvRows() {
+  const body = document.getElementById("env-body");
+  const vars = loadEnvVars();
+  if (vars.length === 0) {
+    body.innerHTML = '<p class="env-empty">No environment variables set.</p>';
+    return;
+  }
+  body.innerHTML = vars.map((v, i) =>
+    `<div class="env-row" data-env-idx="${i}">
+      <input type="checkbox" class="env-toggle" ${v.enabled !== false ? "checked" : ""} title="Enable/disable" />
+      <input type="text" class="env-key" value="${esc(v.key)}" placeholder="KEY" spellcheck="false" />
+      <span class="env-eq">=</span>
+      <input type="text" class="env-val" value="${esc(v.value)}" placeholder="value" spellcheck="false" />
+      <button class="add-btn env-del" title="Remove">✕</button>
+    </div>`
+  ).join("");
+  body.querySelectorAll(".env-del").forEach((btn, i) => {
+    btn.onclick = () => { const vs = loadEnvVars(); vs.splice(i, 1); saveEnvVars(vs); renderEnvRows(); };
+  });
+}
+
+function collectEnvFromDOM() {
+  const rows = document.querySelectorAll(".env-row");
+  const vars = [];
+  rows.forEach(row => {
+    const key = row.querySelector(".env-key").value.trim();
+    const value = row.querySelector(".env-val").value;
+    const enabled = row.querySelector(".env-toggle").checked;
+    if (key) vars.push({key, value, enabled});
+  });
+  saveEnvVars(vars);
+}
+
+function addEnvVar() {
+  collectEnvFromDOM();
+  const vars = loadEnvVars();
+  vars.push({key: "", value: "", enabled: true});
+  saveEnvVars(vars);
+  renderEnvRows();
+  const last = document.querySelector(".env-row:last-child .env-key");
+  if (last) last.focus();
+}
+
+// ── Debug log panel ──────────────────────────────────────────────────────────
+
+let logPollId = null;
+
+function openLogPanel() {
+  if (logPollId) clearInterval(logPollId);
+  document.getElementById("log-panel").style.display = "flex";
+  send({type:"read_log"});
+  logPollId = setInterval(() => send({type:"read_log"}), 3000);
+}
+
+function closeLogPanel() {
+  document.getElementById("log-panel").style.display = "none";
+  if (logPollId) { clearInterval(logPollId); logPollId = null; }
 }
 
 function addCell(kind, afterIdx) {
@@ -952,6 +1098,26 @@ document.getElementById("btn-add-server").onclick  = () => addCell("server", cel
 document.getElementById("btn-add-section").onclick = () => addSection(cells.length-1);
 document.getElementById("btn-export").onclick      = exportHtml;
 document.getElementById("btn-inspector").onclick   = () => { toggleInspector(); updateInspector(null); };
+
+// Save As modal
+document.getElementById("saveas-confirm").onclick = confirmSaveAs;
+document.getElementById("saveas-cancel").onclick = closeSaveAs;
+document.getElementById("saveas-path").addEventListener("keydown", (e) => {
+  if (e.key === "Escape") { closeSaveAs(); return; }
+  if (e.key === "Enter") { e.preventDefault(); confirmSaveAs(); }
+});
+
+// Env panel
+document.getElementById("btn-env").onclick = openEnvPanel;
+document.getElementById("env-add").onclick = addEnvVar;
+document.getElementById("env-save").onclick = closeEnvPanel;
+
+// Log panel
+document.getElementById("btn-log").onclick = () => {
+  const panel = document.getElementById("log-panel");
+  if (panel.style.display === "none") openLogPanel();
+  else closeLogPanel();
+};
 
 // ── Phase 3: Command mode ─────────────────────────────────────────────────────
 

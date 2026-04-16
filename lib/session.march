@@ -11,6 +11,7 @@ mod Session do
   --   ws_loop/3 : receive and handle WebSocket frames until the connection closes
   import Cells
   import Protocol
+  import DebugLog
 
   -- Send a dep_added/dep_error frame for one Forge.add() result tuple.
   fn send_dep_result(socket, result) do
@@ -26,8 +27,8 @@ mod Session do
   fn ws_loop(socket, nb_path, march_bin) do
     match WebSocket.recv(socket) do
     TextFrame(msg) -> do
-      handle_ws_msg(msg, nb_path, march_bin, socket)
-      ws_loop(socket, nb_path, march_bin)
+      let new_path = handle_ws_msg(msg, nb_path, march_bin, socket)
+      ws_loop(socket, new_path, march_bin)
     end
     Ping -> do
       WebSocket.send_frame(socket, Pong)
@@ -45,13 +46,15 @@ mod Session do
   end
 
   -- ── Message dispatcher ────────────────────────────────────────────────────────
+  -- Returns the (possibly updated) nb_path so save_as can change it.
   pfn handle_ws_msg(msg, nb_path, march_bin, socket) do
     match Json.parse(msg) do
-    Err(_) -> WebSocket.send_frame(socket, err_frame("invalid JSON"))
+    Err(_) -> do WebSocket.send_frame(socket, err_frame("invalid JSON")) nb_path end
     Ok(jv) -> do
       match json_get_str(jv, "type") do
-      None -> WebSocket.send_frame(socket, err_frame("missing type field"))
+      None -> do WebSocket.send_frame(socket, err_frame("missing type field")) nb_path end
       Some("load") -> do
+        DebugLog.append("ws", "load")
         match File.read(nb_path) do
         Err(e) -> WebSocket.send_frame(socket, err_frame(to_string(e)))
         Ok(content) -> do
@@ -59,8 +62,10 @@ mod Session do
           WebSocket.send_frame(socket, TextFrame(notebook_msg(content, cells)))
         end
         end
+        nb_path
       end
       Some("save") -> do
+        DebugLog.append("ws", "save -> " ++ nb_path)
         match json_get_str(jv, "content") do
         None -> WebSocket.send_frame(socket, err_frame("missing content"))
         Some(content) -> do
@@ -70,9 +75,44 @@ mod Session do
           end
         end
         end
+        nb_path
+      end
+      Some("save_as") -> do
+        DebugLog.append("ws", "save_as")
+        let path_opt = json_get_str(jv, "path")
+        let content_opt = json_get_str(jv, "content")
+        match (path_opt, content_opt) do
+        (None, _) -> do WebSocket.send_frame(socket, err_frame("missing path")) nb_path end
+        (_, None) -> do WebSocket.send_frame(socket, err_frame("missing content")) nb_path end
+        (Some(new_path), Some(content)) -> do
+          let abs_path = if String.starts_with(new_path, "/") do new_path
+            else System.cwd() ++ "/" ++ new_path
+            end
+          let dir = Path.dirname(abs_path)
+          if not(File.exists(dir)) do
+            WebSocket.send_frame(socket, err_frame("directory does not exist: " ++ dir))
+            nb_path
+          else
+            match File.write(abs_path, content) do
+            Err(e) -> do WebSocket.send_frame(socket, err_frame(to_string(e))) nb_path end
+            Ok(_) -> do
+              let title = Path.basename(abs_path)
+              WebSocket.send_frame(socket, TextFrame(
+                "{\"type\":\"saved_as\",\"path\":" ++ json_str(abs_path) ++
+                ",\"title\":" ++ json_str(title) ++ "}"
+              ))
+              abs_path
+            end
+            end
+          end
+        end
+        end
       end
       Some("run") -> do
         let idx_opt = json_get_int(jv, "index")
+        let env_str = match json_get_str(jv, "env") do Some(s) -> s | None -> "" end
+        let idx_s = match idx_opt do Some(i) -> String.from_int(i) | None -> "?" end
+        DebugLog.append("run", "cell " ++ idx_s)
         match idx_opt do
         None -> WebSocket.send_frame(socket, err_frame("missing index"))
         Some(idx) -> do
@@ -80,7 +120,7 @@ mod Session do
           Err(e) -> WebSocket.send_frame(socket, err_frame(to_string(e)))
           Ok(content) -> do
             let cells = parse_cells(content)
-            match Processes.start_run_proc(cells, idx, march_bin) do
+            match Processes.start_run_proc(cells, idx, march_bin, env_str) do
             Err(msg) -> do
               WebSocket.send_frame(socket, TextFrame(output_msg(idx, "", Some(msg), [])))
             end
@@ -92,6 +132,7 @@ mod Session do
           end
         end
         end
+        nb_path
       end
       Some("poll_run") -> do
         match json_get_int(jv, "index") do
@@ -110,6 +151,7 @@ mod Session do
           end
         end
         end
+        nb_path
       end
       Some("stop_run") -> do
         match json_get_int(jv, "index") do
@@ -119,8 +161,11 @@ mod Session do
           WebSocket.send_frame(socket, TextFrame(output_msg(idx, "", Some("interrupted"), [])))
         end
         end
+        nb_path
       end
       Some("start_server") -> do
+        let env_str = match json_get_str(jv, "env") do Some(s) -> s | None -> "" end
+        DebugLog.append("server", "start_server")
         match json_get_int(jv, "index") do
         None -> WebSocket.send_frame(socket, err_frame("missing index"))
         Some(idx) -> do
@@ -131,7 +176,7 @@ mod Session do
             match nth_cell(cells, idx) do
             None -> WebSocket.send_frame(socket, err_frame("cell not found"))
             Some(ServerCell(src)) -> do
-              match Processes.start_server_proc(src, idx, march_bin) do
+              match Processes.start_server_proc(src, idx, march_bin, env_str) do
               Err(msg) -> do
                 WebSocket.send_frame(socket, TextFrame("{\"type\":\"server_error\",\"index\":" ++ String.from_int(idx) ++ ",\"message\":" ++ json_str(msg) ++ "}"))
               end
@@ -148,8 +193,10 @@ mod Session do
           end
         end
         end
+        nb_path
       end
       Some("stop_server") -> do
+        DebugLog.append("server", "stop_server")
         match json_get_int(jv, "index") do
         None -> WebSocket.send_frame(socket, err_frame("missing index"))
         Some(idx) -> do
@@ -157,6 +204,7 @@ mod Session do
           WebSocket.send_frame(socket, TextFrame("{\"type\":\"server_stopped\",\"index\":" ++ String.from_int(idx) ++ "}"))
         end
         end
+        nb_path
       end
       Some("read_server") -> do
         match json_get_int(jv, "index") do
@@ -168,9 +216,19 @@ mod Session do
           WebSocket.send_frame(socket, TextFrame("{\"type\":\"server_output\",\"index\":" ++ String.from_int(idx) ++ ",\"content\":" ++ json_str(content) ++ ",\"running\":" ++ running_str ++ "}"))
         end
         end
+        nb_path
+      end
+      Some("read_log") -> do
+        let content = DebugLog.read_all()
+        WebSocket.send_frame(socket, TextFrame(
+          "{\"type\":\"log_content\",\"content\":" ++ json_str(content) ++
+          ",\"path\":" ++ json_str(DebugLog.get_path()) ++ "}"
+        ))
+        nb_path
       end
       Some(other) -> do
         WebSocket.send_frame(socket, err_frame("unknown type: " ++ json_escape(other)))
+        nb_path
       end
       end
     end
