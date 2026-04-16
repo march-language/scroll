@@ -83,16 +83,6 @@ describe "parse_cells" do
     end
   end
 
-  test "server fence yields ServerCell" do
-    let src = "```march:server\nHttpServer.start(3000)\n```"
-    let cells = Scroll.parse_cells(src)
-    assert (List.length(cells) == 1)
-    match cells do
-      Cons(cell, Nil) -> assert (Scroll.cell_tag(cell) == "ServerCell")
-      _ -> assert false
-    end
-  end
-
   test "markdown before code fence is kept" do
     let src = "# Title\n\n```march\n42\n```"
     let cells = Scroll.parse_cells(src)
@@ -125,18 +115,6 @@ describe "parse_cells" do
     assert (List.nth(tags, 1) == "Code")
     assert (List.nth(tags, 2) == "Markdown")
     assert (List.nth(tags, 3) == "Code")
-  end
-
-  test "server cell source is preserved" do
-    let src = "```march:server\nfoo()\nbar()\n```"
-    let cells = Scroll.parse_cells(src)
-    match cells do
-      Cons(cell, Nil) ->
-        let s = Scroll.cell_source(cell)
-        assert (String.contains(s, "foo()"))
-        assert (String.contains(s, "bar()"))
-      _ -> assert false
-    end
   end
 
 end
@@ -590,30 +568,6 @@ describe "Section cells" do
 
 end
 
--- ── generate_server_runner ────────────────────────────────────────────────────
-
-describe "generate_server_runner" do
-
-  test "wraps source in ServerCell mod" do
-    let runner = Scroll.generate_server_runner("println(\"ok\")")
-    assert (String.contains(runner, "mod ServerCell"))
-    assert (String.contains(runner, "fn main()"))
-  end
-
-  test "preserves user source" do
-    let runner = Scroll.generate_server_runner("HttpServer.new(3000)")
-    assert (String.contains(runner, "HttpServer.new(3000)"))
-  end
-
-  test "server runner compiles and runs" do
-    let runner = Scroll.generate_server_runner("println(\"hello\")")
-    let (rc, stdout, _) = run_march(runner)
-    assert (rc == 0)
-    assert (String.contains(stdout, "hello"))
-  end
-
-end
-
 -- ── extract_vars ──────────────────────────────────────────────────────────────
 
 describe "extract_vars" do
@@ -764,13 +718,6 @@ describe "notebook_msg" do
     let msg = Scroll.notebook_msg(content, cells)
     assert (String.contains(msg, "\"kind\":\"markdown\""))
     assert (String.contains(msg, "\"kind\":\"code\""))
-  end
-
-  test "server cell kind is present" do
-    let content = "```march:server\nHttpServer.new(3000)\n```"
-    let cells = Scroll.parse_cells(content)
-    let msg = Scroll.notebook_msg(content, cells)
-    assert (String.contains(msg, "\"kind\":\"server\""))
   end
 
 end
@@ -969,37 +916,6 @@ describe "process_forge_adds" do
 
 end
 
--- ── Processes: server log / lifecycle ────────────────────────────────────────
-
-describe "read_server_log" do
-
-  test "returns empty string when no log file exists" do
-    -- Unlikely index → file won't exist
-    let content = Scroll.read_server_log(9999)
-    assert (content == "")
-  end
-
-end
-
-describe "server_is_running" do
-
-  test "returns false when no vault entry exists" do
-    -- Unlikely index → vault key won't be set
-    assert (Scroll.server_is_running(9998) == false)
-  end
-
-end
-
-describe "stop_server_proc" do
-
-  test "is a no-op when nothing is running" do
-    -- Calling stop on an unknown index must not crash.
-    Scroll.stop_server_proc(9997)
-    assert (Scroll.server_is_running(9997) == false)
-  end
-
-end
-
 describe "stop_run_proc" do
 
   test "is a no-op when nothing is running" do
@@ -1078,25 +994,6 @@ describe "start_run_proc + check_run_proc" do
     match Scroll.start_run_proc(cells, 0, "march", "") do
       Err(_) -> assert true
       Ok(_) -> assert false
-    end
-  end
-
-end
-
-describe "start_server_proc" do
-
-  test "starts and stops a server cell process" do
-    -- Long-running server: invoke sleep via Process.run so the March process stays alive.
-    let src = "let _ = Process.run(\"sh\", [\"-c\", \"sleep 10\"])"
-    match Scroll.start_server_proc(src, 8888, "march", "") do
-      Err(_msg) -> assert false
-      Ok(_pid) -> do
-        -- Give march a moment to start up before checking.
-        let _ = Process.run("sh", ["-c", "sleep 0.5"])
-        let running = Scroll.server_is_running(8888)
-        Scroll.stop_server_proc(8888)
-        assert running
-      end
     end
   end
 

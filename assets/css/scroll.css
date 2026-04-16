@@ -10,8 +10,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif;
 .btn-primary:hover{background:var(--acc2);color:#fff}
 .btn-secondary{background:transparent;color:var(--dim);border:1px solid var(--bdr)}
 .btn-secondary:hover{background:var(--card);color:var(--text)}
-.btn-server{background:transparent;color:var(--fn);border:1px solid color-mix(in srgb,var(--fn) 40%,transparent)}
-.btn-server:hover{background:color-mix(in srgb,var(--fn) 10%,transparent)}
 .btn:disabled{opacity:.35;cursor:default}
 #status{font-size:11px;color:var(--dim);padding:3px 10px;border:1px solid var(--bdr);border-radius:4px;min-width:80px;text-align:center;font-family:'JetBrains Mono','Fira Code','SF Mono',monospace}
 #status.ok{color:var(--fn);border-color:color-mix(in srgb,var(--fn) 30%,transparent)}
@@ -53,26 +51,15 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif;
 .cell-code.running{border-left-color:var(--ty);border-color:color-mix(in srgb,var(--ty) 30%,var(--bdr))}
 .cell-code.has-error{border-left-color:#ef4444;border-color:#7f1d1d}
 
-/* ── Server cells ────────────────────────────────── */
-.cell-server-wrap{background:color-mix(in srgb,var(--fn) 5%,var(--card));border:1px solid color-mix(in srgb,var(--fn) 25%,var(--bdr));border-left:3px solid var(--fn);border-radius:8px;overflow:hidden;transition:all .15s;margin:6px 0}
-.cell-server-wrap:focus-within{border-color:var(--fn);box-shadow:0 0 0 2px color-mix(in srgb,var(--fn) 15%,transparent)}
-.cell-server-wrap.server-running{border-left-color:color-mix(in srgb,var(--fn) 80%,#fff)}
-.cell-server-wrap.has-error{border-left-color:#ef4444;border-color:#7f1d1d}
-
 /* ── Cell header (stays dark, inside code blocks) ── */
 .cell-header{display:flex;align-items:center;gap:8px;padding:4px 10px 4px 12px;background:color-mix(in srgb,var(--code) 80%,var(--card));border-bottom:1px solid var(--bdr)}
-.cell-server-wrap .cell-header{background:color-mix(in srgb,var(--fn) 5%,var(--code));border-bottom-color:color-mix(in srgb,var(--fn) 20%,var(--bdr))}
 .cell-label{font-size:10px;font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;color:var(--dim);flex:1;text-transform:uppercase;letter-spacing:.08em}
 .cell-label.running{color:var(--ty)}
-.cell-label.server-label{color:var(--fn)}
-.cell-label.server-label.running{color:color-mix(in srgb,var(--fn) 80%,#fff)}
 
 /* ── Action buttons ──────────────────────────────── */
 .run-btn{padding:2px 10px;font-size:11px;border-radius:4px;border:none;background:var(--acc);color:#09090b;cursor:pointer;font-weight:500;transition:all .15s}
 .run-btn:hover{background:var(--acc2);color:#fff}
 .run-btn:disabled{opacity:.35;cursor:default}
-.start-btn{padding:2px 10px;font-size:11px;border-radius:4px;border:none;background:var(--fn);color:#09090b;cursor:pointer;font-weight:500;transition:all .15s}
-.start-btn:hover{background:color-mix(in srgb,var(--fn) 80%,#fff)}
 .stop-btn{padding:2px 10px;font-size:11px;border-radius:4px;border:none;background:#dc2626;color:#fff;cursor:pointer;font-weight:500;transition:all .15s}
 .stop-btn:hover{background:#b91c1c}
 .add-btns{display:flex;gap:4px}
@@ -91,9 +78,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif;
 .cell-out-html tr:hover td{background:var(--card)}
 .cell-out-html svg{max-width:100%;height:auto}
 .vg-embed{padding:8px 0}.vg-embed canvas{max-width:100%}
-.cell-server-out{border-top:1px solid color-mix(in srgb,var(--fn) 20%,var(--bdr));padding:10px 18px;font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;font-size:13px;white-space:pre-wrap;word-break:break-word;color:var(--fn);background:color-mix(in srgb,var(--fn) 3%,var(--code));max-height:300px;overflow-y:auto}
 .cell-err{border-top:1px solid color-mix(in srgb,#ef4444 30%,var(--bdr));padding:10px 18px;font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;font-size:13px;color:#ef4444;white-space:pre-wrap;background:color-mix(in srgb,#ef4444 5%,var(--code))}
-.pid-badge{font-size:10px;color:var(--fn);font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;padding:1px 6px;border:1px solid color-mix(in srgb,var(--fn) 30%,var(--bdr));border-radius:3px;margin-left:4px}
 
 /* ── Insert-cell bar ─────────────────────────────── */
 .add-cell-bar{display:flex;justify-content:center;gap:8px;padding:5px 0;opacity:0;transition:opacity .15s}
@@ -114,13 +99,12 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif;
 .src-collapsed .src-preview{display:block}
 .src-preview{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;font-size:13px;color:var(--dim);padding:8px 18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:pointer}
 .src-preview:hover{color:var(--acc)}
-.out-collapsed .cell-out,.out-collapsed .cell-out-html,.out-collapsed .cell-err,.out-collapsed .cell-server-out{display:none!important}
+.out-collapsed .cell-out,.out-collapsed .cell-out-html,.out-collapsed .cell-err{display:none!important}
 
 /* ── Phase 3: command mode ──────────────────────────── */
 .cell-wrap:focus{outline:none}
 .cell-wrap.cmd-selected>.cell-code{border-color:var(--acc);box-shadow:0 0 0 2px color-mix(in srgb,var(--acc) 25%,transparent);border-left-color:var(--acc2)}
 .cell-wrap.cmd-selected>.cell-md-wrap{border-left-color:var(--acc2);outline:1px solid color-mix(in srgb,var(--acc) 25%,transparent)}
-.cell-wrap.cmd-selected>.cell-server-wrap{border-color:var(--fn);box-shadow:0 0 0 2px color-mix(in srgb,var(--fn) 25%,transparent)}
 #mode-badge{font-size:9px;font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;padding:2px 7px;border-radius:4px;letter-spacing:.08em;font-weight:700;border:1px solid transparent;display:none;text-transform:uppercase}
 #mode-badge.cmd{display:inline-block;color:var(--ty);background:rgba(251,191,36,.1);border-color:color-mix(in srgb,var(--ty) 30%,transparent)}
 /* cheatsheet modal */
@@ -205,8 +189,6 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif;
 .cm-editor .cm-cursor{border-left-color:var(--acc)!important}
 .cm-editor.cm-focused{outline:none!important}
 .cm-editor .cm-matchingBracket{color:var(--acc)!important;background:color-mix(in srgb,var(--acc) 15%,transparent);outline:1px solid color-mix(in srgb,var(--acc) 30%,transparent)}
-.cell-server-wrap .cm-editor{background:color-mix(in srgb,var(--fn) 5%,var(--code))!important}
-
 /* ── Toolbar icon/label swap ─────────────────────── */
 .btn-ic{display:none}
 .btn-lb{display:inline}

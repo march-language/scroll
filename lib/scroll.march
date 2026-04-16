@@ -26,7 +26,6 @@ fn html_escape(s)                       do Cells.html_escape(s) end
 fn json_escape(s)                       do Cells.json_escape(s) end
 fn json_str(s)                          do Cells.json_str(s) end
 fn generate_runner(cells, idx)          do Runner.generate_runner(cells, idx) end
-fn generate_server_runner(src)          do Runner.generate_server_runner(src) end
 fn extract_cell_output(stdout, code_n)  do Runner.extract_cell_output(stdout, code_n) end
 fn extract_vars(stdout)                 do Runner.extract_vars(stdout) end
 fn extract_forge_adds(stdout)           do Runner.extract_forge_adds(stdout) end
@@ -42,13 +41,9 @@ fn log_start(nb_path)                   do DebugLog.start_log(nb_path) end
 fn log_append(cat, msg)                 do DebugLog.append(cat, msg) end
 fn log_read_all()                       do DebugLog.read_all() end
 fn log_get_path()                       do DebugLog.get_path() end
-fn read_server_log(idx)                 do Processes.read_server_log(idx) end
-fn server_is_running(idx)               do Processes.server_is_running(idx) end
-fn stop_server_proc(idx)                do Processes.stop_server_proc(idx) end
 fn stop_run_proc(idx)                   do Processes.stop_run_proc(idx) end
 fn start_run_proc(cells, idx, bin, env)  do Processes.start_run_proc(cells, idx, bin, env) end
 fn check_run_proc(idx)                  do Processes.check_run_proc(idx) end
-fn start_server_proc(src, idx, bin, env) do Processes.start_server_proc(src, idx, bin, env) end
 
 -- ── Asset serving ─────────────────────────────────────────────────────────────
 -- Assets live under <archive_root>/assets/.  At runtime we discover the
