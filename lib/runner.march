@@ -1,14 +1,13 @@
 -- runner.march — March code generation and cell-output extraction.
 --
 -- Provides:
---   generate_runner/2       : emit a self-contained NotebookRunner March program
---   generate_server_runner/1: emit a standalone ServerCell runner
---   extract_cell_output/2   : pull one cell's output from sentinel-marked stdout
---   extract_vars/1          : parse the __MNB_VARS__ block from stdout
---   extract_forge_adds/1    : find __FORGE_ADD__ sentinel lines in stdout
---   strip_forge_adds/1      : remove those sentinel lines from output
---   process_forge_adds/2    : run `forge add` for each sentinel and return results
---   find_code_idx/4         : map overall cell index → code-cell index
+--   generate_runner/2    : emit a self-contained NotebookRunner March program
+--   extract_cell_output/2: pull one cell's output from sentinel-marked stdout
+--   extract_vars/1       : parse the __MNB_VARS__ block from stdout
+--   extract_forge_adds/1 : find __FORGE_ADD__ sentinel lines in stdout
+--   strip_forge_adds/1   : remove those sentinel lines from output
+--   process_forge_adds/2 : run `forge add` for each sentinel and return results
+--   find_code_idx/4      : map overall cell index → code-cell index
 
 mod Runner do
 
@@ -35,7 +34,7 @@ pfn vars_end_t(tok)             do "__MNB_VARS_END_" ++ tok ++ "__" end
 
 -- ── Runner generation ─────────────────────────────────────────────────────────
 
--- Generate a runner for cells 0..run_through_idx (Code cells only; Server cells skipped).
+-- Generate a runner for cells 0..run_through_idx (Code cells only; others skipped).
 --
 -- Each Code cell becomes a module-level helper function so that:
 --   1. Named function declarations inside cells work normally (lexically scoped).
@@ -321,9 +320,8 @@ fn generate_runner(cells, run_through_idx) do
     else
       match cells do
         Nil -> (List.reverse(mod_rev), List.reverse(body_rev), List.reverse(names_rev))
-        Cons(Markdown(_), rest)   -> go(rest, mod_rev, body_rev, names_rev, code_n, total_n + 1)
-        Cons(ServerCell(_), rest) -> go(rest, mod_rev, body_rev, names_rev, code_n, total_n + 1)
-        Cons(Section(_), rest)    -> go(rest, mod_rev, body_rev, names_rev, code_n, total_n + 1)
+        Cons(Markdown(_), rest) -> go(rest, mod_rev, body_rev, names_rev, code_n, total_n + 1)
+        Cons(Section(_), rest)  -> go(rest, mod_rev, body_rev, names_rev, code_n, total_n + 1)
         Cons(Code(src), rest) ->
           if is_mod_cell(src) do
             let (mod_code, main_code) = make_mod_cell(src, code_n)
@@ -379,19 +377,6 @@ fn generate_runner(cells, run_through_idx) do
   "fn main() do\n" ++
   "  println(\"" ++ session_tok_line(tok) ++ "\")\n" ++
   body ++ "end\n\nend\n"
-end
-
--- Generate a standalone runner for a server cell (wraps source in mod+main).
-fn generate_server_runner(src) do
-  let src = if String.ends_with(src, "\n") do
-    String.slice(src, 0, bs(src) - 1)
-  else src
-  end
-  let indented = String.join(
-    List.map(String.split(src, "\n"), fn l -> "  " ++ l),
-    "\n"
-  ) ++ "\n"
-  "mod ServerCell do\nfn main() do\n" ++ indented ++ "end\nend\n"
 end
 
 -- ── Output extraction ─────────────────────────────────────────────────────────
@@ -554,15 +539,11 @@ end
 
 -- ── Cell index mapping ────────────────────────────────────────────────────────
 
--- Map overall cell index to code-cell index (skipping markdown and server cells).
+-- Map overall cell index to code-cell index (skipping markdown and section cells).
 fn find_code_idx(cells, target_total, code_n, total_n) do
   match cells do
     Nil -> code_n - 1
     Cons(Markdown(_), rest) ->
-      if total_n == target_total do code_n - 1
-      else find_code_idx(rest, target_total, code_n, total_n + 1)
-      end
-    Cons(ServerCell(_), rest) ->
       if total_n == target_total do code_n - 1
       else find_code_idx(rest, target_total, code_n, total_n + 1)
       end

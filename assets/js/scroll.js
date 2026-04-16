@@ -23,7 +23,7 @@ let NB_PATH = document.body.dataset.nbPath;
 const WS_URL  = "ws://" + location.hostname + ":" + document.body.dataset.wsPort + "/ws";
 let IS_TEMP = !!document.body.dataset.isTemp;
 
-let cells = [];   // [{kind, source, output, error, running, server_log, pid}]
+let cells = [];   // [{kind, source, output, error, running}]
 let ws = null;
 
 // When CM module finishes loading, attach editors to any already-rendered code cells
@@ -41,7 +41,6 @@ if (!window._cmReady) {
 let pendingRun = null;
 let inspectorVars = {};   // name -> value string
 let inspectorOpen = false;
-const serverPolls = {};
 const runPolls = {};  // code-cell polling intervals
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
@@ -72,7 +71,7 @@ if (document.fonts && document.fonts.ready) {
 
 function handleMsg(msg) {
   if (msg.type === "notebook") {
-    cells = msg.cells.map(c => ({...c, output:"", error:null, running:false, server_log:"", pid:null, _elapsed_ms:null}));
+    cells = msg.cells.map(c => ({...c, output:"", error:null, running:false, _elapsed_ms:null}));
     window._nbCells = cells;
     render();
     setStatus("ok", "loaded");
@@ -123,46 +122,6 @@ function handleMsg(msg) {
     closeSaveAs();
     setStatus("ok", "saved as " + msg.title);
     setTimeout(() => setStatus("ok", "connected"), 2000);
-  } else if (msg.type === "server_started") {
-    const idx = msg.index;
-    if (cells[idx]) {
-      cells[idx].running = true;
-      cells[idx].pid = msg.pid;
-      cells[idx].server_log = "";
-      cells[idx].error = null;
-      updateCell(idx);
-      startServerPoll(idx);
-    }
-    setStatus("ok", "server started");
-  } else if (msg.type === "server_stopped") {
-    const idx = msg.index;
-    if (cells[idx]) {
-      cells[idx].running = false;
-      cells[idx].pid = null;
-      stopServerPoll(idx);
-      updateCell(idx);
-    }
-    setStatus("ok", "server stopped");
-  } else if (msg.type === "server_output") {
-    const idx = msg.index;
-    if (cells[idx]) {
-      cells[idx].server_log = msg.content;
-      if (!msg.running) {
-        cells[idx].running = false;
-        cells[idx].pid = null;
-        stopServerPoll(idx);
-      }
-      updateCell(idx);
-    }
-  } else if (msg.type === "server_error") {
-    const idx = msg.index;
-    if (cells[idx]) {
-      cells[idx].running = false;
-      cells[idx].error = msg.message;
-      stopServerPoll(idx);
-      updateCell(idx);
-    }
-    setStatus("err", msg.message);
   } else if (msg.type === "log_content") {
     const body = document.getElementById("log-body");
     const pathEl = document.getElementById("log-path");
@@ -184,7 +143,7 @@ function handleMsg(msg) {
   }
 }
 
-// ── Server process management ────────────────────────────────────────────────
+// ── Run process management ────────────────────────────────────────────────────
 
 function startRunPoll(idx) {
   stopRunPoll(idx);
@@ -205,48 +164,11 @@ function stopRun(idx) {
   send({type:"stop_run", index:idx});
 }
 
-function startServerPoll(idx) {
-  stopServerPoll(idx);
-  // Poll immediately, then every 2s
-  send({type:"read_server", index:idx});
-  serverPolls[idx] = setInterval(() => {
-    send({type:"read_server", index:idx});
-  }, 2000);
-}
-
-function stopServerPoll(idx) {
-  if (serverPolls[idx]) {
-    clearInterval(serverPolls[idx]);
-    delete serverPolls[idx];
-  }
-}
-
-function startServer(idx) {
-  if (cells[idx] && cells[idx].kind === "server") {
-    send({type:"save", content: nbSource()});
-    const env = getEnvString();
-    send({type:"start_server", index:idx, env: env || undefined});
-    setStatus("running", "starting…");
-  }
-}
-
-function stopServer(idx) {
-  send({type:"stop_server", index:idx});
-  stopServerPoll(idx);
-  if (cells[idx]) {
-    cells[idx].running = false;
-    cells[idx].pid = null;
-    updateCell(idx);
-  }
-  setStatus("ok", "stopping…");
-}
-
 // ── Cell operations ──────────────────────────────────────────────────────────
 
 function nbSource() {
   return cells.map(c => {
     if (c.kind === "markdown") return c.source;
-    if (c.kind === "server")   return "```march:server\n" + c.source + "\n```";
     if (c.kind === "section")  return "<!-- section: " + c.source + " -->";
     return "```march\n" + c.source + "\n```";
   }).join("\n\n");
@@ -457,11 +379,11 @@ function closeLogPanel() {
 }
 
 function addCell(kind, afterIdx) {
-  const newCell = {kind, source:"", output:"", error:null, running:false, server_log:"", pid:null};
+  const newCell = {kind, source:"", output:"", error:null, running:false};
   cells.splice(afterIdx+1, 0, newCell);
   render();
   const newIdx = afterIdx + 1;
-  if ((kind === "code" || kind === "server") && window.focusCM) {
+  if (kind === "code" && window.focusCM) {
     setTimeout(() => window.focusCM(newIdx), 30);
   } else {
     const ta = document.querySelector(`[data-idx="${newIdx}"] textarea`);
@@ -471,7 +393,7 @@ function addCell(kind, afterIdx) {
 
 function deleteCell(idx) {
   if (cells.length <= 1) return;
-  if (cells[idx] && cells[idx].running) stopServer(idx);
+  if (cells[idx] && cells[idx].running && cells[idx].kind === "code") stopRun(idx);
   cells.splice(idx, 1);
   render();
 }
@@ -604,9 +526,6 @@ function render() {
     if (cell.kind === "markdown") {
       wrap.innerHTML = markdownCell(idx, cell);
       attachMarkdownEvents(wrap, idx);
-    } else if (cell.kind === "server") {
-      wrap.innerHTML = serverCell(idx, cell);
-      attachEditorEvents(wrap, idx);
     } else if (cell.kind === "section") {
       wrap.innerHTML = sectionCell(idx, cell);
     } else {
@@ -632,7 +551,7 @@ function render() {
     // between-cell add bar
     const bar = document.createElement("div");
     bar.className = "add-cell-bar";
-    bar.innerHTML = `<button onclick="addCell('markdown',${idx})">+ md</button><button onclick="addCell('code',${idx})">+ code</button><button onclick="addCell('server',${idx})">+ srv</button><button onclick="addSection(${idx})">+ §</button>`;
+    bar.innerHTML = `<button onclick="addCell('markdown',${idx})">+ md</button><button onclick="addCell('code',${idx})">+ code</button><button onclick="addSection(${idx})">+ §</button>`;
     wrap.appendChild(bar);
 
     nb.appendChild(wrap);
@@ -641,7 +560,7 @@ function render() {
   // end add bar
   const endBar = document.createElement("div");
   endBar.style.cssText = "display:flex;justify-content:center;gap:8px;padding:12px 0";
-  endBar.innerHTML = `<button class="add-btn" onclick="addCell('markdown',${cells.length-1})">+ Markdown</button><button class="add-btn" onclick="addCell('code',${cells.length-1})">+ Code</button><button class="add-btn" onclick="addCell('server',${cells.length-1})">+ Server</button><button class="add-btn" onclick="addSection(${cells.length-1})">+ Section</button>`;
+  endBar.innerHTML = `<button class="add-btn" onclick="addCell('markdown',${cells.length-1})">+ Markdown</button><button class="add-btn" onclick="addCell('code',${cells.length-1})">+ Code</button><button class="add-btn" onclick="addSection(${cells.length-1})">+ Section</button>`;
   nb.appendChild(endBar);
   // Restore command mode selection highlight if still valid
   if (cmdActive && cmdSelected >= 0 && cmdSelected < cells.length) {
@@ -683,7 +602,7 @@ function toggleSection(idx) {
 function addSection(afterIdx) {
   const title = prompt("Section title:", "");
   if (title === null) return;
-  const newCell = {kind:"section", source:title||"Section", output:"", error:null, running:false, server_log:"", pid:null};
+  const newCell = {kind:"section", source:title||"Section", output:"", error:null, running:false};
   cells.splice(afterIdx+1, 0, newCell);
   render();
   saveNotebook();
@@ -834,36 +753,6 @@ function codeCell(idx, cell) {
   </div>`;
 }
 
-function serverCell(idx, cell) {
-  const running = !!cell.running;
-  const lbl = running ? "server · running" : "server";
-  const lblCls = running ? " server-label running" : " server-label";
-  const pidBadge = cell.pid ? `<span class="pid-badge">pid ${esc(cell.pid)}</span>` : "";
-  const actionBtn = running
-    ? `<button class="stop-btn" onclick="stopServer(${idx})">■ Stop</button>`
-    : `<button class="start-btn" onclick="startServer(${idx})">▶ Start</button>`;
-  const outHtml = cell.server_log
-    ? `<div class="cell-server-out" id="srv-out-${idx}">${esc(cell.server_log)}</div>`
-    : "";
-  const errHtml = cell.error
-    ? `<div class="cell-err">${esc(cell.error)}</div>`
-    : "";
-  return `<div class="cell-server-wrap${running ? " server-running" : cell.error ? " has-error" : ""}">
-    <div class="cell-header">
-      <span class="cell-label${lblCls}">${lbl}</span>
-      ${pidBadge}
-      <div class="add-btns">
-        <button class="add-btn" onclick="moveCell(${idx},-1)" title="Move up">↑</button>
-        <button class="add-btn" onclick="moveCell(${idx},1)" title="Move down">↓</button>
-        <button class="add-btn" onclick="deleteCell(${idx})" title="Delete">✕</button>
-      </div>
-      ${actionBtn}
-    </div>
-    <div class="cm-host" data-cell="${idx}"></div>
-    ${outHtml}${errHtml}
-  </div>`;
-}
-
 function updateCell(idx) {
   const wrap = document.querySelector(`[data-idx="${idx}"]`);
   if (!wrap) return;
@@ -875,11 +764,6 @@ function updateCell(idx) {
   if (cell.kind === "markdown") {
     wrap.innerHTML = markdownCell(idx, cell);
     attachMarkdownEvents(wrap, idx);
-  } else if (cell.kind === "server") {
-    wrap.innerHTML = serverCell(idx, cell);
-    attachEditorEvents(wrap, idx);
-    const out = document.getElementById(`srv-out-${idx}`);
-    if (out) out.scrollTop = out.scrollHeight;
   } else if (cell.kind === "code") {
     wrap.innerHTML = codeCell(idx, cell);
     attachEditorEvents(wrap, idx);
@@ -889,7 +773,7 @@ function updateCell(idx) {
   // re-attach the add bar
   const bar = document.createElement("div");
   bar.className = "add-cell-bar";
-  bar.innerHTML = `<button onclick="addCell('markdown',${idx})">+ md</button><button onclick="addCell('code',${idx})">+ code</button><button onclick="addCell('server',${idx})">+ srv</button><button onclick="addSection(${idx})">+ §</button>`;
+  bar.innerHTML = `<button onclick="addCell('markdown',${idx})">+ md</button><button onclick="addCell('code',${idx})">+ code</button><button onclick="addSection(${idx})">+ §</button>`;
   wrap.appendChild(bar);
   // Re-apply command mode selection if this cell was selected
   if (cmdActive && cmdSelected === idx) {
@@ -988,11 +872,10 @@ function exportHtml() {
     } else if (cell.kind === "markdown") {
       body += `<div class="cell-md-wrap"><div class="cell-md">${renderMd(cell.source||"")}</div></div>\n`;
     } else {
-      const kind = cell.kind === "server" ? "server" : "code";
       const src = esc(cell.source||"");
       const out = cell.output ? renderOutput(cell.output) : "";
       const err = cell.error ? `<div class="cell-error">${esc(cell.error)}</div>` : "";
-      body += `<div class="cell-code"><div class="cell-header"><span class="cell-label">${kind}</span></div><pre class="cell-src" style="background:var(--code);padding:12px;border-radius:6px;overflow:auto">${src}</pre><div class="cell-out">${out}${err}</div></div>\n`;
+      body += `<div class="cell-code"><div class="cell-header"><span class="cell-label">code</span></div><pre class="cell-src" style="background:var(--code);padding:12px;border-radius:6px;overflow:auto">${src}</pre><div class="cell-out">${out}${err}</div></div>\n`;
     }
   });
 
@@ -1092,9 +975,8 @@ document.getElementById("search-input").addEventListener("keydown", (e) => {
 document.getElementById("btn-run-all").onclick    = runAll;
 document.getElementById("btn-clear-all").onclick  = clearAll;
 document.getElementById("btn-save").onclick       = saveNotebook;
-document.getElementById("btn-add-code").onclick   = () => addCell("code",   cells.length-1);
-document.getElementById("btn-add-md").onclick     = () => addCell("markdown", cells.length-1);
-document.getElementById("btn-add-server").onclick  = () => addCell("server", cells.length-1);
+document.getElementById("btn-add-code").onclick    = () => addCell("code",     cells.length-1);
+document.getElementById("btn-add-md").onclick      = () => addCell("markdown", cells.length-1);
 document.getElementById("btn-add-section").onclick = () => addSection(cells.length-1);
 document.getElementById("btn-export").onclick      = exportHtml;
 document.getElementById("btn-inspector").onclick   = () => { toggleInspector(); updateInspector(null); };
@@ -1172,7 +1054,7 @@ function cmdEnterEdit(idx) {
   const wrap = document.querySelector(`[data-idx="${idx}"]`);
   if (!wrap) return;
   const kind = cells[idx] && cells[idx].kind;
-  if ((kind === "code" || kind === "server") && window.focusCM) {
+  if (kind === "code" && window.focusCM) {
     window.focusCM(idx);
   } else {
     const ta = wrap.querySelector("textarea");
@@ -1186,7 +1068,6 @@ function convertCell(idx, toKind) {
   cells[idx].kind = toKind;
   cells[idx].output = "";
   cells[idx].error = null;
-  cells[idx].server_log = "";
   cells[idx]._editing = false;
   updateCell(idx);
   setTimeout(() => cmdSelect(idx, false), 10);
@@ -1291,7 +1172,6 @@ document.addEventListener("keydown", (e) => {
 // Expose to CM module keybindings
 window._nbCells = cells;
 window.runCell = runCell;
-window.startServer = startServer;
 window.addCell = addCell;
 window.cmdSelect = cmdSelect;
 

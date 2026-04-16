@@ -50,10 +50,9 @@ end
 -- carry a heap-allocated closure environment, so the RC issue doesn't apply.
 fn cell_to_json_obj(cell) do
   match cell do
-    Markdown(s)   -> "{\"kind\":\"markdown\",\"source\":" ++ json_str(s) ++ "}"
-    Code(s)       -> "{\"kind\":\"code\",\"source\":" ++ json_str(s) ++ "}"
-    ServerCell(s) -> "{\"kind\":\"server\",\"source\":" ++ json_str(s) ++ "}"
-    Section(t)    -> "{\"kind\":\"section\",\"source\":" ++ json_str(t) ++ "}"
+    Markdown(s) -> "{\"kind\":\"markdown\",\"source\":" ++ json_str(s) ++ "}"
+    Code(s)     -> "{\"kind\":\"code\",\"source\":" ++ json_str(s) ++ "}"
+    Section(t)  -> "{\"kind\":\"section\",\"source\":" ++ json_str(t) ++ "}"
   end
 end
 

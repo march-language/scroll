@@ -3,9 +3,9 @@ mod Session do
   -- session.march — WebSocket message handler and receive loop.
   --
   -- Dispatches JSON messages from the browser to the appropriate sub-system:
-  --   load / save      → file I/O
+  --   load / save / save_as      → file I/O
   --   run / poll_run / stop_run  → Processes code-cell execution
-  --   start_server / stop_server / read_server → Processes server-cell management
+  --   read_log                   → DebugLog
   --
   -- Public API (fn):
   --   ws_loop/3 : receive and handle WebSocket frames until the connection closes
@@ -159,61 +159,6 @@ mod Session do
         Some(idx) -> do
           Processes.stop_run_proc(idx)
           WebSocket.send_frame(socket, TextFrame(output_msg(idx, "", Some("interrupted"), [])))
-        end
-        end
-        nb_path
-      end
-      Some("start_server") -> do
-        let env_str = match json_get_str(jv, "env") do Some(s) -> s | None -> "" end
-        DebugLog.append("server", "start_server")
-        match json_get_int(jv, "index") do
-        None -> WebSocket.send_frame(socket, err_frame("missing index"))
-        Some(idx) -> do
-          match File.read(nb_path) do
-          Err(e) -> WebSocket.send_frame(socket, err_frame(to_string(e)))
-          Ok(content) -> do
-            let cells = parse_cells(content)
-            match nth_cell(cells, idx) do
-            None -> WebSocket.send_frame(socket, err_frame("cell not found"))
-            Some(ServerCell(src)) -> do
-              match Processes.start_server_proc(src, idx, march_bin, env_str) do
-              Err(msg) -> do
-                WebSocket.send_frame(socket, TextFrame("{\"type\":\"server_error\",\"index\":" ++ String.from_int(idx) ++ ",\"message\":" ++ json_str(msg) ++ "}"))
-              end
-              Ok(pid) -> do
-                WebSocket.send_frame(socket, TextFrame("{\"type\":\"server_started\",\"index\":" ++ String.from_int(idx) ++ ",\"pid\":" ++ json_str(pid) ++ "}"))
-              end
-              end
-            end
-            Some(_) -> do
-              WebSocket.send_frame(socket, err_frame("cell is not a server cell"))
-            end
-            end
-          end
-          end
-        end
-        end
-        nb_path
-      end
-      Some("stop_server") -> do
-        DebugLog.append("server", "stop_server")
-        match json_get_int(jv, "index") do
-        None -> WebSocket.send_frame(socket, err_frame("missing index"))
-        Some(idx) -> do
-          Processes.stop_server_proc(idx)
-          WebSocket.send_frame(socket, TextFrame("{\"type\":\"server_stopped\",\"index\":" ++ String.from_int(idx) ++ "}"))
-        end
-        end
-        nb_path
-      end
-      Some("read_server") -> do
-        match json_get_int(jv, "index") do
-        None -> WebSocket.send_frame(socket, err_frame("missing index"))
-        Some(idx) -> do
-          let content = Processes.read_server_log(idx)
-          let running = Processes.server_is_running(idx)
-          let running_str = if running do "true" else "false" end
-          WebSocket.send_frame(socket, TextFrame("{\"type\":\"server_output\",\"index\":" ++ String.from_int(idx) ++ ",\"content\":" ++ json_str(content) ++ ",\"running\":" ++ running_str ++ "}"))
         end
         end
         nb_path

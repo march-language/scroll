@@ -42,7 +42,6 @@ mod Page do
       "<h1 id=\"nb-title\">" ++ nb_path ++ "</h1>\n" ++
       "<button class=\"btn btn-secondary\" id=\"btn-add-md\" title=\"Add Markdown cell\"><span class=\"btn-ic\">+ md</span><span class=\"btn-lb\">+ Markdown</span></button>\n" ++
       "<button class=\"btn btn-secondary\" id=\"btn-add-code\" title=\"Add Code cell\"><span class=\"btn-ic\">+ code</span><span class=\"btn-lb\">+ Code</span></button>\n" ++
-      "<button class=\"btn btn-server\" id=\"btn-add-server\" title=\"Add Server cell\"><span class=\"btn-ic\">+ srv</span><span class=\"btn-lb\">+ Server</span></button>\n" ++
       "<button class=\"btn btn-secondary\" id=\"btn-add-section\" title=\"Add Section divider\"><span class=\"btn-ic\">+ §</span><span class=\"btn-lb\">+ Section</span></button>\n" ++
       "<button class=\"btn btn-primary\" id=\"btn-run-all\" title=\"Run all cells\"><span class=\"btn-ic\">▶▶</span><span class=\"btn-lb\">▶ Run All</span></button>\n" ++
       "<button class=\"btn btn-secondary\" id=\"btn-clear-all\" title=\"Clear all outputs\"><span class=\"btn-ic\">⌫</span><span class=\"btn-lb\">Clear All</span></button>\n" ++
