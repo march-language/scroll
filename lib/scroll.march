@@ -41,9 +41,25 @@ fn log_start(nb_path)                   do DebugLog.start_log(nb_path) end
 fn log_append(cat, msg)                 do DebugLog.append(cat, msg) end
 fn log_read_all()                       do DebugLog.read_all() end
 fn log_get_path()                       do DebugLog.get_path() end
-fn stop_run_proc(nb_path)                          do Processes.stop_run_proc(nb_path) end
-fn start_run_proc(cells, idx, bin, env, nb_path)   do Processes.start_run_proc(cells, idx, bin, env, nb_path) end
-fn check_run_proc(idx, nb_path)                    do Processes.check_run_proc(idx, nb_path) end
+fn stop_run_proc(nb_path, conn_id)                          do Processes.stop_run_proc(nb_path, conn_id) end
+fn start_run_proc(cells, idx, bin, env, nb_path, conn_id)   do Processes.start_run_proc(cells, idx, bin, env, nb_path, conn_id) end
+fn check_run_proc(idx, nb_path, conn_id)                    do Processes.check_run_proc(idx, nb_path, conn_id) end
+
+-- ── Connection ID generation ──────────────────────────────────────────────────
+-- Each WebSocket upgrade gets a unique connection ID so multiple browser tabs
+-- pointing at the same notebook file each get their own isolated REPL process.
+-- We use a Vault-backed monotonic counter (thread-safe via Vault's atomic ops)
+-- combined with the server PID to stay unique across server restarts.
+
+pfn next_conn_id() do
+  let ns = "__scroll_conn__"
+  let n = match Vault.ns_get(ns, "counter") do
+    None -> 0
+    Some(s) -> match String.to_int(s) do Ok(n) -> n | Err(_) -> 0 end
+  end
+  let _ = Vault.ns_set(ns, "counter", String.from_int(n + 1))
+  String.from_int(System.pid()) ++ "_" ++ String.from_int(n)
+end
 
 -- ── Asset serving ─────────────────────────────────────────────────────────────
 -- Assets live under <archive_root>/assets/.  At runtime we discover the
@@ -106,7 +122,8 @@ fn router(nb_path, display_title, port, march_bin, is_temp, conn) do
         conn |> HttpServer.text(403, "Forbidden: cross-origin WebSocket not allowed")
       else
         WebSocket.upgrade(conn, fn socket ->
-          Session.ws_loop(socket, nb_path, march_bin)
+          let conn_id = next_conn_id()
+          Session.ws_loop(socket, nb_path, march_bin, conn_id)
         )
       end
 
@@ -118,6 +135,9 @@ fn router(nb_path, display_title, port, march_bin, is_temp, conn) do
 
     (:get, Cons("assets", Cons("js", Cons("editor.js", Nil)))) ->
       serve_asset(conn, "js/editor.js", "application/javascript; charset=utf-8")
+
+    (:get, Cons("assets", Cons("js", Cons("purify.min.js", Nil)))) ->
+      serve_asset(conn, "js/purify.min.js", "application/javascript; charset=utf-8")
 
     _ ->
       conn |> HttpServer.text(404, "Not Found")

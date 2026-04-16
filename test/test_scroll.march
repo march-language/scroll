@@ -920,22 +920,22 @@ describe "stop_run_proc" do
 
   test "is a no-op when nothing is running" do
     -- Calling stop on a path with no active runtime must not crash.
-    Scroll.stop_run_proc("/tmp/test_scroll_nonexistent.scrollmd")
+    Scroll.stop_run_proc("/tmp/test_scroll_nonexistent.scrollmd", "test")
     assert true
   end
 
 end
 
 -- Helper: poll check_run_proc until finished (max attempts to prevent hangs).
--- nb_path is the session key for the persistent REPL runtime.
-fn wait_for_run(idx, nb_path, attempts) do
+-- nb_path + conn_id form the session key for the persistent REPL runtime.
+fn wait_for_run(idx, nb_path, conn_id, attempts) do
   if attempts <= 0 do
     None
   else
-    match Scroll.check_run_proc(idx, nb_path) do
+    match Scroll.check_run_proc(idx, nb_path, conn_id) do
       None -> do
         let _ = Process.run("sh", ["-c", "sleep 0.1"])
-        wait_for_run(idx, nb_path, attempts - 1)
+        wait_for_run(idx, nb_path, conn_id, attempts - 1)
       end
       Some(result) -> Some(result)
     end
@@ -946,20 +946,21 @@ describe "start_run_proc + check_run_proc" do
 
   test "runs a simple cell end-to-end and reports output" do
     let nb = "/tmp/test_scroll_run1.scrollmd"
+    let conn = "test_conn_1"
     let cells = Scroll.parse_cells("```march\n40 + 2\n```")
-    match Scroll.start_run_proc(cells, 0, "march", "", nb) do
+    match Scroll.start_run_proc(cells, 0, "march", "", nb, conn) do
       Err(msg) -> do
         IO.puts("start_run_proc failed: " ++ msg)
         assert false
       end
       Ok(_sid) -> do
-        match wait_for_run(0, nb, 60) do
+        match wait_for_run(0, nb, conn, 60) do
           None -> do
-            Scroll.stop_run_proc(nb)
+            Scroll.stop_run_proc(nb, conn)
             assert false
           end
           Some((stdout, err_opt, _vars)) -> do
-            Scroll.stop_run_proc(nb)
+            Scroll.stop_run_proc(nb, conn)
             assert (err_opt == None)
             assert (String.contains(stdout, "42"))
           end
@@ -970,17 +971,18 @@ describe "start_run_proc + check_run_proc" do
 
   test "reports error on syntax-broken cell" do
     let nb = "/tmp/test_scroll_run2.scrollmd"
+    let conn = "test_conn_2"
     let cells = Scroll.parse_cells("```march\n@@@ bad @@@\n```")
-    match Scroll.start_run_proc(cells, 0, "march", "", nb) do
+    match Scroll.start_run_proc(cells, 0, "march", "", nb, conn) do
       Err(_) -> assert true
       Ok(_sid) -> do
-        match wait_for_run(0, nb, 60) do
+        match wait_for_run(0, nb, conn, 60) do
           None -> do
-            Scroll.stop_run_proc(nb)
+            Scroll.stop_run_proc(nb, conn)
             assert false
           end
           Some((_stdout, err_opt, _vars)) -> do
-            Scroll.stop_run_proc(nb)
+            Scroll.stop_run_proc(nb, conn)
             match err_opt do
               -- In REPL mode, syntax errors appear in output rather than err_opt;
               -- the test passes as long as the cell completed (no infinite hang).
@@ -999,7 +1001,7 @@ describe "start_run_proc + check_run_proc" do
     let nb = "/tmp/test_scroll_run3.scrollmd"
     let cells = Scroll.parse_cells("# Title\n\n```march\n42\n```")
     -- overall idx 0 is the Markdown cell; no code cell has been seen yet
-    match Scroll.start_run_proc(cells, 0, "march", "", nb) do
+    match Scroll.start_run_proc(cells, 0, "march", "", nb, "test_conn_3") do
       Err(_) -> assert true
       Ok(_) -> assert false
     end

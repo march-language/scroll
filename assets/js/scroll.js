@@ -709,7 +709,10 @@ function renderOutput(text) {
     return `<div class="cell-out-html"><div id="${id}" class="vg-embed"></div></div>`;
   }
   if (t.startsWith('<svg') || t.startsWith('<table') || t.startsWith('<!DOCTYPE') || t.startsWith('<html')) {
-    return `<div class="cell-out-html">${text}</div>`;
+    const clean = typeof DOMPurify !== 'undefined'
+      ? DOMPurify.sanitize(text, {FORCE_BODY: true, ADD_TAGS: ['svg'], ADD_ATTR: ['viewBox','xmlns','stroke','fill','stroke-width','stroke-linecap','stroke-linejoin','d','cx','cy','r','x','y','width','height','transform','class','id','style']})
+      : text;
+    return `<div class="cell-out-html">${clean}</div>`;
   }
   return `<div class="cell-out">${esc(text)}</div>`;
 }
@@ -885,7 +888,7 @@ function exportHtml() {
       body += `<div class="cell-md-wrap"><div class="cell-md">${renderMd(cell.source||"")}</div></div>\n`;
     } else {
       const src = esc(cell.source||"");
-      const out = cell.output ? renderOutput(cell.output) : "";
+      const out = cell.output ? renderOutput(cell.output) : "";  // renderOutput already sanitizes
       const err = cell.error ? `<div class="cell-error">${esc(cell.error)}</div>` : "";
       body += `<div class="cell-code"><div class="cell-header"><span class="cell-label">code</span></div><pre class="cell-src" style="background:var(--code);padding:12px;border-radius:6px;overflow:auto">${src}</pre><div class="cell-out">${out}${err}</div></div>\n`;
     }

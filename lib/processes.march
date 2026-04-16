@@ -5,28 +5,33 @@
 -- This gives cells access to the full March actor model: long-lived processes
 -- spawned in one cell remain alive across subsequent cell runs.
 --
+-- Each WebSocket connection gets its own REPL via a unique connection ID.
+-- This prevents two browser tabs open to the same notebook from sharing a
+-- single REPL, which would corrupt both sessions when either tab runs a cell.
+--
 -- Public API (fn):
---   start_run_proc/4 : start (or reuse) the runtime and feed cells to it
---   check_run_proc/2 : poll — None = still running, Some(...) = done
---   stop_run_proc/1  : kill the runtime for this session
+--   start_run_proc/6 : start (or reuse) the runtime and feed cells to it
+--   check_run_proc/3 : poll — None = still running, Some(...) = done
+--   live_run_proc/2  : poll intermediate output
+--   stop_run_proc/2  : kill the runtime for this connection
 
 mod Processes do
 
 pfn trim(s) do String.trim(s) end
 
--- Session ID: derived from the notebook path so one REPL is shared across
--- all WebSocket connections to the same notebook.
-pfn session_id(nb_path) do nb_path end
+-- Session ID: combines the notebook path and the per-WebSocket connection ID
+-- so each browser tab gets its own isolated REPL process.
+pfn session_id(nb_path, conn_id) do nb_path ++ ":" ++ conn_id end
 
 -- Spawn (or reuse) the persistent REPL, then feed all code cells 0..run_through_idx.
 -- Returns Ok(session_id) on success, Err(msg) on failure.
-fn start_run_proc(cells, run_through_idx, march_bin, env_str, nb_path) do
+fn start_run_proc(cells, run_through_idx, march_bin, env_str, nb_path, conn_id) do
   -- Guard: must have at least one code cell at or before run_through_idx.
   let cidx = Runner.find_code_idx(cells, run_through_idx, 0, 0)
   if cidx < 0 do
     Err("no code cell at or before index " ++ String.from_int(run_through_idx))
   else
-  let sid = session_id(nb_path)
+  let sid = session_id(nb_path, conn_id)
   -- Kill any existing REPL and start fresh so the new env_str takes effect
   -- and state from previous runs does not leak into this one.
   match Runtime.start_runtime(sid, march_bin, env_str) do
@@ -42,9 +47,9 @@ end
 
 -- Poll for the target cell's result.
 -- Returns None while still running, Some((output, err_opt, vars)) when done.
-fn check_run_proc(run_through_idx, nb_path) do
+fn check_run_proc(run_through_idx, nb_path, conn_id) do
   let _ = run_through_idx  -- index not needed; the runtime tracks position
-  let sid = session_id(nb_path)
+  let sid = session_id(nb_path, conn_id)
   match Runtime.poll_result(sid) do
     None -> None
     Some((out, err_opt)) ->
@@ -58,13 +63,13 @@ end
 
 -- Poll for live/intermediate output of the currently running cell.
 -- Returns None if context cells haven't finished, Some(partial_output) otherwise.
-fn live_run_proc(nb_path) do
-  Runtime.poll_live(session_id(nb_path))
+fn live_run_proc(nb_path, conn_id) do
+  Runtime.poll_live(session_id(nb_path, conn_id))
 end
 
--- Kill the REPL for this session.
-fn stop_run_proc(nb_path) do
-  Runtime.stop_runtime(session_id(nb_path))
+-- Kill the REPL for this connection.
+fn stop_run_proc(nb_path, conn_id) do
+  Runtime.stop_runtime(session_id(nb_path, conn_id))
 end
 
 end

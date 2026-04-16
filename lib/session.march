@@ -7,8 +7,13 @@ mod Session do
   --   run / poll_run / stop_run  → Processes code-cell execution
   --   read_log                   → DebugLog
   --
+  -- Each WebSocket connection is identified by a unique conn_id (generated in
+  -- scroll.march when the upgrade happens).  The conn_id is threaded through
+  -- ws_loop and all Processes calls so each browser tab owns an isolated REPL.
+  -- When the connection closes, the REPL for that conn_id is stopped.
+  --
   -- Public API (fn):
-  --   ws_loop/3 : receive and handle WebSocket frames until the connection closes
+  --   ws_loop/4 : receive and handle WebSocket frames until the connection closes
   import Cells
   import Protocol
   import DebugLog
@@ -24,19 +29,23 @@ mod Session do
   end
 
   -- ── Receive loop ──────────────────────────────────────────────────────────────
-  fn ws_loop(socket, nb_path, march_bin) do
+  fn ws_loop(socket, nb_path, march_bin, conn_id) do
     match WebSocket.recv(socket) do
     TextFrame(msg) -> do
-      let new_path = handle_ws_msg(msg, nb_path, march_bin, socket)
-      ws_loop(socket, new_path, march_bin)
+      let new_path = handle_ws_msg(msg, nb_path, march_bin, socket, conn_id)
+      ws_loop(socket, new_path, march_bin, conn_id)
     end
     Ping -> do
       WebSocket.send_frame(socket, Pong)
-      ws_loop(socket, nb_path, march_bin)
+      ws_loop(socket, nb_path, march_bin, conn_id)
     end
-    Pong -> ws_loop(socket, nb_path, march_bin)
-    Close(code, reason) -> WebSocket.close(socket, code, reason)
-    _ -> ws_loop(socket, nb_path, march_bin)
+    Pong -> ws_loop(socket, nb_path, march_bin, conn_id)
+    Close(code, reason) -> do
+      -- Clean up the REPL for this connection when the browser tab closes.
+      Processes.stop_run_proc(nb_path, conn_id)
+      WebSocket.close(socket, code, reason)
+    end
+    _ -> ws_loop(socket, nb_path, march_bin, conn_id)
     end
   end
 
@@ -47,8 +56,7 @@ mod Session do
 
   -- ── Message dispatcher ────────────────────────────────────────────────────────
   -- Returns the (possibly updated) nb_path so save_as can change it.
-  -- nb_path doubles as the session ID for the persistent REPL runtime.
-  pfn handle_ws_msg(msg, nb_path, march_bin, socket) do
+  pfn handle_ws_msg(msg, nb_path, march_bin, socket, conn_id) do
     match Json.parse(msg) do
     Err(_) -> do WebSocket.send_frame(socket, err_frame("invalid JSON")) nb_path end
     Ok(jv) -> do
@@ -121,7 +129,7 @@ mod Session do
           Err(e) -> WebSocket.send_frame(socket, err_frame(to_string(e)))
           Ok(content) -> do
             let cells = parse_cells(content)
-            match Processes.start_run_proc(cells, idx, march_bin, env_str, nb_path) do
+            match Processes.start_run_proc(cells, idx, march_bin, env_str, nb_path, conn_id) do
             Err(msg) -> do
               WebSocket.send_frame(socket, TextFrame(output_msg(idx, "", Some(msg), [])))
             end
@@ -139,9 +147,9 @@ mod Session do
         match json_get_int(jv, "index") do
         None -> WebSocket.send_frame(socket, err_frame("missing index"))
         Some(idx) -> do
-          match Processes.check_run_proc(idx, nb_path) do
+          match Processes.check_run_proc(idx, nb_path, conn_id) do
           None -> do
-            let live = match Processes.live_run_proc(nb_path) do
+            let live = match Processes.live_run_proc(nb_path, conn_id) do
               None -> ""
               Some(s) -> s
             end
@@ -165,7 +173,7 @@ mod Session do
         match json_get_int(jv, "index") do
         None -> WebSocket.send_frame(socket, err_frame("missing index"))
         Some(idx) -> do
-          Processes.stop_run_proc(nb_path)
+          Processes.stop_run_proc(nb_path, conn_id)
           WebSocket.send_frame(socket, TextFrame(output_msg(idx, "", Some("interrupted"), [])))
         end
         end

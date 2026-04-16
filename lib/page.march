@@ -9,37 +9,48 @@ mod Page do
   --   /assets/css/scroll.css   — design system + cell styles
   --   /assets/js/editor.js     — CodeMirror 6 editor module
   --   /assets/js/scroll.js     — WebSocket client, cell rendering, keyboard
+  --   /assets/js/purify.min.js — DOMPurify (sanitises HTML cell output)
   --
   -- The nb_path is exposed to JS via a data-* attribute on <body>; the
   -- WebSocket URL is derived from window.location at runtime so we don't
   -- need to bake the port into the page.
   --
-  -- We build the page with plain string concatenation rather than the
-  -- ~H"""...""" sigil so that `forge test` can link the test binary
-  -- without the html_auto_escape builtin.  nb_path and port are the only
-  -- interpolated values and both are server-controlled, so HTML-aware
-  -- escaping would be redundant.
+  -- nb_path is HTML-escaped before interpolation to prevent injection via
+  -- crafted notebook file paths (e.g. paths containing `"` or `<`).
   --
   -- Public API (fn):
   --   ui_html/3 : return the full HTML page as a String
+
+  -- Escape the five HTML metacharacters so nb_path cannot break out of an
+  -- attribute value or inject tags.
+  pfn html_escape(s) do
+    let s = String.replace_all(s, "&", "&amp;")
+    let s = String.replace_all(s, "<", "&lt;")
+    let s = String.replace_all(s, ">", "&gt;")
+    let s = String.replace_all(s, "\"", "&quot;")
+    String.replace_all(s, "'", "&#39;")
+  end
+
   fn ui_html(nb_path, port, is_temp) do
+    let safe_path = html_escape(nb_path)
     let head_html =
       "<!DOCTYPE html>\n" ++
       "<html lang=\"en\">\n" ++
       "<head>\n" ++
       "<meta charset=\"UTF-8\">\n" ++
       "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n" ++
-      "<title>March Notebook — " ++ nb_path ++ "</title>\n" ++
+      "<title>March Notebook — " ++ safe_path ++ "</title>\n" ++
       "<link rel=\"stylesheet\" href=\"/assets/css/scroll.css\">\n" ++
+      "<script src=\"/assets/js/purify.min.js\"></script>\n" ++
       "<script type=\"importmap\">{\"imports\":{\"@codemirror/state\":\"https://esm.sh/@codemirror/state@6\",\"@codemirror/view\":\"https://esm.sh/@codemirror/view@6\",\"@codemirror/language\":\"https://esm.sh/@codemirror/language@6\",\"@codemirror/commands\":\"https://esm.sh/@codemirror/commands@6\",\"@lezer/highlight\":\"https://esm.sh/@lezer/highlight@1\"}}</script>\n" ++
       "<script type=\"module\" src=\"/assets/js/editor.js\"></script>\n" ++
       "</head>\n"
 
     let temp_attr = if is_temp do " data-is-temp=\"1\"" else "" end
     let toolbar_html =
-      "<body data-nb-path=\"" ++ nb_path ++ "\" data-ws-port=\"" ++ String.from_int(port) ++ "\"" ++ temp_attr ++ ">\n" ++
+      "<body data-nb-path=\"" ++ safe_path ++ "\" data-ws-port=\"" ++ String.from_int(port) ++ "\"" ++ temp_attr ++ ">\n" ++
       "<div id=\"toolbar\">\n" ++
-      "<h1 id=\"nb-title\">" ++ nb_path ++ "</h1>\n" ++
+      "<h1 id=\"nb-title\">" ++ safe_path ++ "</h1>\n" ++
       "<button class=\"btn btn-secondary\" id=\"btn-add-md\" title=\"Add Markdown cell\"><span class=\"btn-ic\">+ md</span><span class=\"btn-lb\">+ Markdown</span></button>\n" ++
       "<button class=\"btn btn-secondary\" id=\"btn-add-code\" title=\"Add Code cell\"><span class=\"btn-ic\">+ code</span><span class=\"btn-lb\">+ Code</span></button>\n" ++
       "<button class=\"btn btn-secondary\" id=\"btn-add-section\" title=\"Add Section divider\"><span class=\"btn-ic\">+ §</span><span class=\"btn-lb\">+ Section</span></button>\n" ++
