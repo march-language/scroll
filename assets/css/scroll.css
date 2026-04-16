@@ -195,7 +195,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif;
 .btn-ic{display:none}
 .btn-lb{display:inline}
 
-/* ── Responsive ──────────────────────────────────── */
+/* ── Phase 5: chord banner ───────────────────────── */
+.chord-banner{position:absolute;bottom:4px;left:50%;transform:translateX(-50%);background:color-mix(in srgb,var(--ty) 15%,var(--card));border:1px solid color-mix(in srgb,var(--ty) 40%,transparent);color:var(--ty);font-size:11px;font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;padding:3px 12px;border-radius:4px;pointer-events:none;z-index:10;white-space:nowrap;transition:opacity 0.4s}
+.chord-banner.fade{opacity:0}
+
+/* ── Phase 5: search no-matches ─────────────────── */
+.search-no-matches{color:#ef4444!important}
+
+/* ── Phase 5: markdown editing indicator ────────── */
+.cell-md-wrap.editing{border-left-color:var(--acc)}
+
+/* ── Phase 5: Responsive ─────────────────────────── */
 @media(max-width:960px){
   #toolbar{padding:8px 12px;gap:6px}
   .btn{padding:5px 9px}
@@ -204,3 +214,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif;
   #nb-title{font-size:12px;max-width:120px}
 }
 @media(max-width:768px){#notebook{padding:24px 16px 80px}.cell{max-width:100%}#inspector{display:none}}
+
+/* ── Phase 5: Mobile always-visible add-cell buttons */
+@media (hover: none) {
+  .add-cell-bar { opacity: 1; }
+  .cell-md-header { opacity: 1; }
+}

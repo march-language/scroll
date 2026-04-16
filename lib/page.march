@@ -62,7 +62,7 @@ mod Page do
       "<button class=\"btn btn-secondary\" id=\"btn-env\" title=\"Environment variables\" aria-label=\"Environment variables\"><span class=\"btn-ic\">$</span><span class=\"btn-lb\">$ Env</span></button>\n" ++
       "<button class=\"btn btn-secondary\" id=\"btn-log\" title=\"Debug log\" aria-label=\"Debug log\"><span class=\"btn-ic\">⋯</span><span class=\"btn-lb\">Log</span></button>\n" ++
       "<button id=\"theme-toggle\" title=\"Toggle light/dark theme\" aria-label=\"Toggle light/dark theme\">☽</button>\n" ++
-      "<span id=\"mode-badge\">COMMAND</span>\n" ++
+      "<span id=\"mode-badge\" title=\"Command mode — press ? for shortcuts, Enter to edit, Esc to exit\">COMMAND</span>\n" ++
       "<div id=\"status\">connecting</div>\n" ++
       "</div>\n"
 
@@ -83,6 +83,8 @@ mod Page do
       "<tr><td>o</td><td>Toggle output collapse</td></tr>\n" ++
       "<tr><td>0 0</td><td>Clear cell output</td></tr>\n" ++
       "<tr><td>Shift+Enter</td><td>Run cell + select next</td></tr>\n" ++
+      "<tr><td>/</td><td>Open search</td></tr>\n" ++
+      "<tr><td>n / N</td><td>Next / prev search match</td></tr>\n" ++
       "<tr><td>?</td><td>Show this cheatsheet</td></tr>\n" ++
       "<tr><td>Esc</td><td>Exit command mode</td></tr>\n" ++
       "</table>\n" ++

@@ -43,6 +43,18 @@ let runAllTotal = 0;   // total code cells when runAll was started
 let runAllDone  = 0;   // cells completed so far in runAll
 let inspectorVars = {};   // name -> value string
 let inspectorOpen = false;
+let _unsaved = false;
+let _inspectorLastCellIdx = null; // 5.8: track which cell last updated the inspector
+
+// 5.2: unsaved-changes indicator
+function setUnsaved(val) {
+  _unsaved = val;
+  const base = document.title.replace(/^• /, "");
+  document.title = val ? "• " + base : base;
+}
+window.onbeforeunload = function() {
+  if (_unsaved) return "You have unsaved changes. Leave?";
+};
 const runPolls = {};  // code-cell polling intervals
 const lastStillRunning = {};  // idx -> timestamp of last still_running/output msg
 const HUNG_TIMEOUT_MS = 90000; // 90 seconds
@@ -61,8 +73,16 @@ function connect() {
     // Clear all running poll intervals so they don't fire against a dead socket.
     Object.keys(runPolls).forEach(idx => stopRunPoll(Number(idx)));
     Object.keys(hungTimers).forEach(idx => stopHungTimer(Number(idx)));
-    setStatus("err", "disconnected");
-    setTimeout(connect, 2000);
+    // 5.12: reconnection countdown
+    const RECONNECT_DELAY = 2000;
+    let remaining = Math.ceil(RECONNECT_DELAY / 1000);
+    setStatus("err", "disconnected — retrying in " + remaining + "s");
+    const countdownId = setInterval(() => {
+      remaining--;
+      if (remaining > 0) setStatus("err", "disconnected — retrying in " + remaining + "s");
+      else { clearInterval(countdownId); setStatus("err", "disconnected — reconnecting…"); }
+    }, 1000);
+    setTimeout(connect, RECONNECT_DELAY);
   };
   ws.onerror = () => {};
   ws.onmessage = (e) => {
@@ -115,27 +135,46 @@ function handleMsg(msg) {
       if (!msg.error) cells[idx]._dirty = false;
       updateCell(idx);
     }
-    if (msg.vars) updateInspector(msg.vars);
+    if (msg.vars) updateInspector(msg.vars, idx);
     if (pendingRun !== null) {
       runAllDone++;
-      const next = nextCodeCell(pendingRun + 1);
-      if (next !== -1) {
-        pendingRun = next;
-        runCell(next);
-        setStatus("running", "running cell " + (runAllDone + 1) + " / " + runAllTotal);
-      } else {
+      // 5.6: on error during run-all, scroll error cell into view and set status
+      if (msg.error) {
+        const errWrap = document.querySelector(`[data-idx="${idx}"]`);
+        if (errWrap) errWrap.scrollIntoView({behavior:"smooth", block:"nearest"});
+        setStatus("err", "error in cell " + (idx + 1));
         pendingRun = null;
         runAllTotal = 0;
         runAllDone  = 0;
-        setStatus("ok", "done");
+      } else {
+        const next = nextCodeCell(pendingRun + 1);
+        if (next !== -1) {
+          pendingRun = next;
+          runCell(next);
+          setStatus("running", "running cell " + (runAllDone + 1) + " / " + runAllTotal);
+        } else {
+          pendingRun = null;
+          runAllTotal = 0;
+          runAllDone  = 0;
+          setStatus("ok", "done");
+        }
       }
     } else {
       setStatus("ok", "done");
     }
   } else if (msg.type === "saved") {
+    setUnsaved(false); // 5.2
     setStatus("ok", "saved");
+    // 5.3: briefly show "✓ Saved" on the Save button
+    const saveBtn = document.getElementById("btn-save");
+    if (saveBtn) {
+      const orig = saveBtn.innerHTML;
+      saveBtn.innerHTML = '<span class="btn-ic">✓</span><span class="btn-lb">✓ Saved</span>';
+      setTimeout(() => { saveBtn.innerHTML = orig; }, 1500);
+    }
     setTimeout(() => setStatus("ok", "connected"), 1500);
   } else if (msg.type === "saved_as") {
+    setUnsaved(false); // 5.2
     const oldVars = loadEnvVars();
     NB_PATH = msg.path;
     IS_TEMP = false;
@@ -146,6 +185,13 @@ function handleMsg(msg) {
     document.title = "March Notebook — " + (msg.title || msg.path);
     closeSaveAs();
     setStatus("ok", "saved as " + msg.title);
+    // 5.3: briefly show "✓ Saved" on the Save button
+    const saveBtn2 = document.getElementById("btn-save");
+    if (saveBtn2) {
+      const orig2 = saveBtn2.innerHTML;
+      saveBtn2.innerHTML = '<span class="btn-ic">✓</span><span class="btn-lb">✓ Saved</span>';
+      setTimeout(() => { saveBtn2.innerHTML = orig2; }, 1500);
+    }
     setTimeout(() => setStatus("ok", "connected"), 2000);
   } else if (msg.type === "log_content") {
     const body = document.getElementById("log-body");
@@ -348,6 +394,21 @@ function openSaveAs() {
       : "notebook";
     inp.value = name + ".scrollmd";
   }
+  // 5.14: show subtitle when notebook is temporary
+  const subtitleId = "saveas-temp-subtitle";
+  let subtitle = document.getElementById(subtitleId);
+  if (IS_TEMP) {
+    if (!subtitle) {
+      subtitle = document.createElement("p");
+      subtitle.id = subtitleId;
+      subtitle.style.cssText = "font-size:12px;color:var(--dim);margin-bottom:10px;font-style:italic";
+      subtitle.textContent = "This notebook is temporary. Choose a path to save it permanently.";
+      const h3 = document.querySelector("#saveas-inner h3");
+      if (h3) h3.insertAdjacentElement("afterend", subtitle);
+    }
+  } else if (subtitle) {
+    subtitle.remove();
+  }
   modal.style.display = "flex";
   inp.focus();
   inp.select();
@@ -473,6 +534,7 @@ function closeLogPanel() {
 function addCell(kind, afterIdx) {
   const newCell = {kind, source:"", output:"", error:null, running:false};
   cells.splice(afterIdx+1, 0, newCell);
+  setUnsaved(true); // 5.2
   render();
   const newIdx = afterIdx + 1;
   if (kind === "code" && window.focusCM) {
@@ -487,6 +549,7 @@ function deleteCell(idx) {
   if (cells.length <= 1) return;
   if (cells[idx] && cells[idx].running && cells[idx].kind === "code") stopRun(idx);
   cells.splice(idx, 1);
+  setUnsaved(true); // 5.2
 
   // Fix up stale indices held in module-level state after the splice.
   // pendingRun
@@ -519,6 +582,7 @@ function moveCell(idx, dir) {
   const to = idx + dir;
   if (to < 0 || to >= cells.length) return;
   [cells[idx], cells[to]] = [cells[to], cells[idx]];
+  setUnsaved(true); // 5.2
   render();
   saveNotebook();
 }
@@ -734,7 +798,7 @@ function markdownCell(idx, cell) {
   const editorHtml = editing
     ? `<div class="cell-md-editor"><textarea data-cell="${idx}" spellcheck="false">${esc(cell.source)}</textarea></div>`
     : "";
-  return `<div class="cell-md-wrap">
+  return `<div class="cell-md-wrap${editing ? ' editing' : ''}">
     <div class="cell-md-header">
       <span class="cell-md-label">markdown</span>
       <div class="cell-md-actions">
@@ -765,6 +829,7 @@ function attachMarkdownEvents(wrap, idx) {
   if (!ta) return;
   ta.addEventListener("input", () => {
     cells[idx].source = ta.value;
+    setUnsaved(true); // 5.2
     // live-update the preview while editing
     const preview = wrap.querySelector(".cell-md");
     if (preview) preview.innerHTML = renderMd(ta.value) || '<span style="color:#4b5563;font-style:italic">Click to edit…</span>';
@@ -784,16 +849,23 @@ function attachMarkdownEvents(wrap, idx) {
 }
 
 let _vegaLoaded = false;
-function ensureVega(cb) {
+function ensureVega(cb, containerEl) {
+  // 5.9: helper to mark container as failed
+  function vegaLoadError() {
+    if (containerEl) containerEl.textContent = "[Vega-Lite chart — failed to load renderer from CDN]";
+  }
   if (_vegaLoaded) { cb(); return; }
   const s1 = document.createElement('script');
   s1.src = 'https://cdn.jsdelivr.net/npm/vega@5/build/vega.min.js';
+  s1.onerror = vegaLoadError; // 5.9
   s1.onload = () => {
     const s2 = document.createElement('script');
     s2.src = 'https://cdn.jsdelivr.net/npm/vega-lite@5/build/vega-lite.min.js';
+    s2.onerror = vegaLoadError; // 5.9
     s2.onload = () => {
       const s3 = document.createElement('script');
       s3.src = 'https://cdn.jsdelivr.net/npm/vega-embed@6/build/vega-embed.min.js';
+      s3.onerror = vegaLoadError; // 5.9
       s3.onload = () => { _vegaLoaded = true; cb(); };
       document.head.appendChild(s3);
     };
@@ -809,6 +881,7 @@ function renderOutput(text) {
     const id = 'vg-' + Math.random().toString(36).slice(2);
     // Render placeholder immediately, embed after scripts load
     setTimeout(() => {
+      const vegaContainer = document.getElementById(id);
       ensureVega(() => {
         const el = document.getElementById(id);
         if (!el) return;
@@ -817,7 +890,7 @@ function renderOutput(text) {
           vegaEmbed(el, spec, {theme: 'dark', actions: {export: true, source: false, compiled: false, editor: false}})
             .catch(e => { el.textContent = 'Vega error: ' + e.message; });
         } catch(e) { el.textContent = 'JSON parse error: ' + e.message; }
-      });
+      }, vegaContainer);
     }, 0);
     return `<div class="cell-out-html"><div id="${id}" class="vg-embed"></div></div>`;
   }
@@ -839,7 +912,7 @@ function codeCell(idx, cell) {
     : (cell._elapsed_ms != null ? ` · ${fmtMs(cell._elapsed_ms)}` : "");
   const lbl = cell.running ? `running…${timing}` : `In [${idx+1}]${timing}`;
   const lblCls = cell.running ? " running" : "";
-  const staleBadge = cell._dirty ? `<span class="stale-badge" title="Output may be stale">↻ stale</span>` : "";
+  const staleBadge = cell._dirty ? `<span class="stale-badge" title="Source changed since last run — re-run this cell to refresh output">↻ stale</span>` : "";
   const slowBadge = (!cell.running && isPotentiallyLongRunning(cell.source)) ? `<span class="slow-badge" title="May take a while — use ⬛ to stop">⏱</span>` : "";
   const srcCollapsed = !!cell._src_collapsed;
   const outCollapsed = !!cell._out_collapsed;
@@ -930,6 +1003,7 @@ function attachEditorEvents(wrap, idx) {
   const source = cells[idx].source || "";
   window.createCMEditor(host, idx, source, (newVal) => {
     cells[idx].source = newVal;
+    setUnsaved(true); // 5.2
     // Mark this cell and all later code cells as dirty (output may be stale)
     if (cells[idx].kind === "code") {
       for (let i = idx; i < cells.length; i++) {
@@ -958,10 +1032,12 @@ function toggleInspector() {
   else panel.classList.add("inspector-hidden");
 }
 
-function updateInspector(vars) {
+function updateInspector(vars, idx) {
   if (vars && typeof vars === "object") {
     Object.assign(inspectorVars, vars);
   }
+  // 5.8: track last cell that updated inspector
+  if (idx !== undefined && idx !== null) _inspectorLastCellIdx = idx;
   if (!inspectorOpen) return;
   const body = document.getElementById("inspector-body");
   const names = Object.keys(inspectorVars);
@@ -969,11 +1045,19 @@ function updateInspector(vars) {
     body.innerHTML = '<p class="inspector-empty">Run a cell to see variables.</p>';
     return;
   }
-  body.innerHTML = names.map(name => {
-    const val = String(inspectorVars[name] || "").slice(0, 120);
+  // 5.8: "Last updated" line
+  const lastUpdated = _inspectorLastCellIdx !== null
+    ? `<div style="font-size:10px;color:var(--dim);padding:4px 6px 8px;font-style:italic">Last updated: Cell ${_inspectorLastCellIdx + 1}</div>`
+    : "";
+  const TRUNC = 80;
+  body.innerHTML = lastUpdated + names.map(name => {
+    const fullVal = String(inspectorVars[name] || "");
+    // 5.8: truncate display at 80 chars, show full value in title
+    const displayVal = fullVal.length > TRUNC ? fullVal.slice(0, TRUNC) + "…" : fullVal;
     const en = esc(name);
-    const ev = esc(val);
-    return `<div class="inspector-row" title="${en} = ${ev}"><span class="inspector-name">${en}</span><span class="inspector-val">${ev}</span></div>`;
+    const ev = esc(displayVal);
+    const efull = esc(fullVal);
+    return `<div class="inspector-row" title="${en} = ${efull}"><span class="inspector-name">${en}</span><span class="inspector-val" title="${efull}">${ev}</span></div>`;
   }).join("");
 }
 
@@ -1010,10 +1094,22 @@ function exportHtml() {
     } else if (cell.kind === "markdown") {
       body += `<div class="cell-md-wrap"><div class="cell-md">${renderMd(cell.source||"")}</div></div>\n`;
     } else {
+      // 5.15: capture CM highlighted HTML if editor is available
+      let srcHtml = "";
+      const cmHost = document.querySelector(`.cm-host[data-cell="${idx}"]`);
+      if (cmHost) {
+        const cmContent = cmHost.querySelector(".cm-content");
+        if (cmContent) {
+          srcHtml = cmContent.innerHTML;
+        }
+      }
       const src = esc(cell.source||"");
+      const srcBlock = srcHtml
+        ? `<div class="cm-content cell-src-highlighted" style="font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;font-size:13px;padding:12px 18px;background:var(--code);border-radius:6px;overflow:auto;white-space:pre-wrap">${srcHtml}</div>`
+        : `<pre class="cell-src" style="background:var(--code);padding:12px;border-radius:6px;overflow:auto">${src}</pre>`;
       const out = cell.output ? renderOutput(cell.output) : "";  // renderOutput already sanitizes
       const err = cell.error ? `<div class="cell-error">${esc(cell.error)}</div>` : "";
-      body += `<div class="cell-code"><div class="cell-header"><span class="cell-label">code</span></div><pre class="cell-src" style="background:var(--code);padding:12px;border-radius:6px;overflow:auto">${src}</pre><div class="cell-out">${out}${err}</div></div>\n`;
+      body += `<div class="cell-code"><div class="cell-header"><span class="cell-label">code</span></div>${srcBlock}<div class="cell-out">${out}${err}</div></div>\n`;
     }
   });
 
@@ -1079,8 +1175,14 @@ function runSearch(term) {
 
 function updateSearchCursor() {
   const count = _searchMatches.length;
-  document.getElementById("search-count").textContent =
-    count === 0 ? "no matches" : `${_searchCursor+1} / ${count}`;
+  const countEl = document.getElementById("search-count");
+  if (count === 0) {
+    countEl.textContent = "no matches";
+    countEl.classList.add("search-no-matches"); // 5.7: red when no matches
+  } else {
+    countEl.textContent = `${_searchCursor+1} / ${count}`;
+    countEl.classList.remove("search-no-matches");
+  }
   if (count > 0 && _searchCursor >= 0) {
     const w = document.querySelector(`[data-idx="${_searchMatches[_searchCursor]}"]`);
     if (w) w.scrollIntoView({behavior:"smooth", block:"nearest"});
@@ -1089,13 +1191,17 @@ function updateSearchCursor() {
 
 function searchNext() {
   if (_searchMatches.length === 0) return;
+  const wasLast = _searchCursor === _searchMatches.length - 1;
   _searchCursor = (_searchCursor + 1) % _searchMatches.length;
+  if (wasLast) showToast("Wrapped to top", "ok"); // 5.7
   updateSearchCursor();
 }
 
 function searchPrev() {
   if (_searchMatches.length === 0) return;
+  const wasFirst = _searchCursor === 0;
   _searchCursor = (_searchCursor - 1 + _searchMatches.length) % _searchMatches.length;
+  if (wasFirst) showToast("Wrapped to bottom", "ok"); // 5.7
   updateSearchCursor();
 }
 
@@ -1138,6 +1244,33 @@ document.getElementById("btn-log").onclick = () => {
   if (panel.style.display === "none") openLogPanel();
   else closeLogPanel();
 };
+
+// ── Phase 5: chord visual banner ─────────────────────────────────────────────
+
+let _chordBannerTimer = null;
+
+function showChordBanner(idx, text) {
+  // Remove any existing banner
+  document.querySelectorAll(".chord-banner").forEach(el => el.remove());
+  if (_chordBannerTimer) { clearTimeout(_chordBannerTimer); _chordBannerTimer = null; }
+  const wrap = document.querySelector(`[data-idx="${idx}"]`);
+  if (!wrap) return;
+  const banner = document.createElement("div");
+  banner.className = "chord-banner";
+  banner.textContent = text;
+  wrap.style.position = "relative"; // ensure relative positioning
+  wrap.appendChild(banner);
+  _chordBannerTimer = setTimeout(() => {
+    banner.classList.add("fade");
+    setTimeout(() => { if (banner.parentNode) banner.remove(); }, 400);
+    _chordBannerTimer = null;
+  }, 600);
+}
+
+function clearChordBanner() {
+  document.querySelectorAll(".chord-banner").forEach(el => el.remove());
+  if (_chordBannerTimer) { clearTimeout(_chordBannerTimer); _chordBannerTimer = null; }
+}
 
 // ── Phase 3: Command mode ─────────────────────────────────────────────────────
 
@@ -1298,6 +1431,8 @@ document.addEventListener("keydown", (e) => {
     const now = Date.now();
     const dbl = (k) => cmdLastKey === k && (now - cmdLastMs) < 500;
     e.preventDefault();
+    // 5.1: clear chord banner on any non-chord key
+    if (e.key !== "d" && e.key !== "0") clearChordBanner();
     switch(e.key) {
       case "j": case "ArrowDown": {
         if (e.shiftKey) { moveCell(cmdSelected, 1); setTimeout(() => cmdSelect(Math.min(cmdSelected + 1, cells.length - 1), false), 20); break; }
@@ -1324,13 +1459,23 @@ document.addEventListener("keydown", (e) => {
       case "y":
         convertCell(cmdSelected, "code"); break;
       case "d":
-        if (dbl("d")) { const old = cmdSelected; deleteCell(old); cmdLastKey = "";
-          setTimeout(() => { if (old > 0) cmdSelect(old-1); else if (cells.length>0) cmdSelect(0); }, 20); }
-        else { cmdLastKey = "d"; cmdLastMs = now; }
+        if (dbl("d")) {
+          clearChordBanner(); // 5.1
+          const old = cmdSelected; deleteCell(old); cmdLastKey = "";
+          setTimeout(() => { if (old > 0) cmdSelect(old-1); else if (cells.length>0) cmdSelect(0); }, 20);
+        } else {
+          cmdLastKey = "d"; cmdLastMs = now;
+          showChordBanner(cmdSelected, "d · Press again to delete"); // 5.1
+        }
         return;
       case "0":
-        if (dbl("0")) { clearCell(cmdSelected); cmdLastKey = ""; }
-        else { cmdLastKey = "0"; cmdLastMs = now; }
+        if (dbl("0")) {
+          clearChordBanner(); // 5.4
+          clearCell(cmdSelected); cmdLastKey = "";
+        } else {
+          cmdLastKey = "0"; cmdLastMs = now;
+          showChordBanner(cmdSelected, "0 · Press again to clear output"); // 5.4
+        }
         return;
       case "o":
         toggleOutCollapse(cmdSelected); break;
