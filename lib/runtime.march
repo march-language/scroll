@@ -33,12 +33,11 @@
 
 mod Runtime do
 
+import Shell
+
 pfn trim(s) do String.trim(s) end
 
--- Shell-quote a single token for safe interpolation into sh -c.
-pfn sh_quote(s) do
-  "'" ++ String.replace_all(s, "'", "'\\''") ++ "'"
-end
+pfn sh_quote(s) do Shell.sh_quote(s) end
 
 -- Vault namespace and key helpers.
 pfn rt_ns()              do "__scroll_rt__" end
@@ -83,6 +82,27 @@ pfn get_proc(session_id) do
   end
 end
 
+-- Returns true iff every byte of s is in [A-Za-z0-9_].
+-- Used to guard env-var key names against injection.
+pfn is_identifier(s) do
+  let n = String.byte_size(s)
+  if n == 0 do false
+  else
+    fn check(i) do
+      if i >= n do true
+      else
+        let c = String.slice(s, i, 1)
+        let ok = (c >= "A" && c <= "Z") || (c >= "a" && c <= "z") ||
+                 (c >= "0" && c <= "9") || c == "_"
+        if ok do check(i + 1)
+        else false
+        end
+      end
+    end
+    check(0)
+  end
+end
+
 -- Build the shell env-prefix from newline-separated KEY=VALUE pairs.
 pfn env_prefix(env_str) do
   if String.is_empty(trim(env_str)) do ""
@@ -92,10 +112,12 @@ pfn env_prefix(env_str) do
       match String.split_first(line, "=") do
         None -> None
         Some((k, v)) ->
-          let k = trim(k)
-          -- Basic guard: only export if key looks like an identifier.
-          if String.is_empty(k) do None
-          else Some("export " ++ sh_quote(k) ++ "=" ++ sh_quote(v) ++ "; ")
+          -- Strip \r and trim whitespace; only export valid identifier keys.
+          let k = trim(String.replace_all(k, "\r", ""))
+          let v = String.replace_all(v, "\r", "")
+          if is_identifier(k) do
+            Some("export " ++ sh_quote(k) ++ "=" ++ sh_quote(v) ++ "; ")
+          else None
           end
       end
     )
@@ -151,6 +173,7 @@ fn start_runtime(session_id, march_bin, env_str) do
 end
 
 -- Kill the REPL and remove all Vault entries for this session.
+-- Also deletes the temp output/error files to avoid /tmp accumulation.
 fn stop_runtime(session_id) do
   match get_proc(session_id) do
     None -> ()
@@ -163,6 +186,8 @@ fn stop_runtime(session_id) do
   let _ = Vault.ns_drop(rt_ns(), rt_out_key(session_id))
   let _ = Vault.ns_drop(rt_ns(), rt_skip_key(session_id))
   let _ = Vault.ns_drop(rt_ns(), rt_sentinel_key(session_id))
+  let _ = File.delete(rt_out_path(session_id))
+  let _ = File.delete(rt_err_path(session_id))
   ()
 end
 

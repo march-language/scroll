@@ -386,7 +386,11 @@ function saveEnvVars(vars) {
 
 function getEnvString() {
   return loadEnvVars().filter(v => v.key && v.enabled !== false)
-    .map(v => v.key + "=" + v.value).join("\n");
+    .map(v => {
+      const k = v.key.replace(/[\r\n]/g, "");
+      const val = (v.value || "").replace(/[\r\n]/g, "");
+      return k + "=" + val;
+    }).join("\n");
 }
 
 function openEnvPanel() {

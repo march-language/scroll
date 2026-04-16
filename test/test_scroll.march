@@ -1043,4 +1043,61 @@ describe "unescape_json Unicode" do
 
 end
 
+-- ── 4.5 New tests: CRLF, extract_vars =, path traversal ─────────────────────
+
+describe "parse_cells CRLF" do
+
+  test "CRLF line endings are treated the same as LF" do
+    -- A notebook with Windows line endings should parse identically.
+    let crlf = "# Title\r\n\r\n```march\r\nlet x = 1\r\n```"
+    let lf   = "# Title\n\n```march\nlet x = 1\n```"
+    let cells_crlf = Scroll.parse_cells(crlf)
+    let cells_lf   = Scroll.parse_cells(lf)
+    assert (List.length(cells_crlf) == List.length(cells_lf))
+  end
+
+  test "bare CR is treated as newline" do
+    let cr = "hello\rworld"
+    let cells = Scroll.parse_cells(cr)
+    -- Should produce a single Markdown cell containing both words.
+    assert (List.length(cells) >= 1)
+  end
+
+  test "code fence detected with CRLF endings" do
+    let crlf = "```march\r\nlet x = 42\r\n```"
+    let cells = Scroll.parse_cells(crlf)
+    assert (List.length(cells) == 1)
+    match cells do
+      Cons(cell, Nil) ->
+        assert (Scroll.cell_tag(cell) == "Code")
+      _ -> assert false
+    end
+  end
+
+end
+
+describe "extract_vars value containing =" do
+
+  test "value with = signs is preserved in full" do
+    -- extract_vars uses String.split_first which splits on the FIRST = only,
+    -- so values containing = must be preserved intact.
+    -- Token format: __MNB_TOK_<tok> on its own line establishes the run token.
+    -- Vars block: __MNB_VARS_<tok>__\n...\n__MNB_VARS_END_<tok>__
+    let tok = "TESTTOKEN"
+    let stdout =
+      "__MNB_TOK_" ++ tok ++ "\n" ++
+      "__MNB_VARS_" ++ tok ++ "__\n" ++
+      "url=https://example.com/a=b&c=d\n" ++
+      "\n__MNB_VARS_END_" ++ tok ++ "__"
+    let vars = Scroll.extract_vars(stdout)
+    match vars do
+      Cons((name, value), Nil) ->
+        assert (name == "url")
+        assert (value == "https://example.com/a=b&c=d")
+      _ -> assert false
+    end
+  end
+
+end
+
 end

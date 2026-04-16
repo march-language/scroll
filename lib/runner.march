@@ -11,11 +11,14 @@
 
 mod Runner do
 
+import Shell
+
 -- ── Local string helpers ──────────────────────────────────────────────────────
 
 pfn bs(s) do String.byte_size(s) end
 pfn sw(s, p) do String.starts_with(s, p) end
 pfn trim(s) do String.trim(s) end
+pfn sh_quote(s) do Shell.sh_quote(s) end
 
 -- ── Sentinel markers ─────────────────────────────────────────────────────────
 
@@ -473,12 +476,6 @@ fn strip_forge_adds(output) do
   let lines = String.split(output, "\n")
   let filtered = List.filter(lines, fn line -> not(String.starts_with(line, "__FORGE_ADD__:")))
   String.join(filtered, "\n")
-end
-
--- Shell-quote a string using POSIX single-quote wrapping so it is safe to
--- interpolate into a "sh -c" command even if it contains spaces or metacharacters.
-pfn sh_quote(s) do
-  "'" ++ String.replace_all(s, "'", "'\\''") ++ "'"
 end
 
 -- Validate a forge-add spec extracted from cell stdout.

@@ -65,11 +65,19 @@ fn json_str(s) do "\"" ++ json_escape(s) ++ "\"" end
 -- Code = regular code cell (run in sequence, produces output)
 type Cell = Markdown(String) | Code(String) | Section(String)
 
+-- Normalize line endings: replace \r\n with \n, then bare \r with \n.
+-- This ensures parse_cells works with Windows (CRLF) or old-Mac (CR) files.
+pfn normalize_crlf(s) do
+  let s = String.replace_all(s, "\r\n", "\n")
+  String.replace_all(s, "\r", "\n")
+end
+
 -- parse_cells: parse the .scrollmd markdown format into a list of cells.
 -- Supports two fence kinds:
 --   ```march     → Code cell
 --   (plain text) → Markdown cell
 fn parse_cells(content) do
+  let content = normalize_crlf(content)
   let lines = String.split(content, "\n")
   -- mode: "none" | "code"
   fn go(lines, cells, buf, mode) do

@@ -1,0 +1,11 @@
+-- shell.march — Shell-quoting utility shared by runtime.march and runner.march.
+
+mod Shell do
+
+-- Shell-quote a string using POSIX single-quote wrapping so it is safe to
+-- interpolate into a "sh -c" command even if it contains spaces or metacharacters.
+fn sh_quote(s) do
+  "'" ++ String.replace_all(s, "'", "'\\''") ++ "'"
+end
+
+end
