@@ -541,9 +541,13 @@ function render() {
     wrap.appendChild(handle);
     attachDragEvents(wrap, idx);
 
-    // Click on cell wrapper (not button/textarea) → command mode
+    // Click on cell wrapper (not button/textarea/editor) → command mode.
+    // Clicks on the CodeMirror editor are excluded: the editor handles its
+    // own focus.  If we were in command mode, exit it so keystrokes go to CM.
     wrap.addEventListener("click", (e) => {
-      if (!e.target.closest("button,textarea,a,input")) {
+      if (e.target.closest(".cm-editor")) {
+        if (cmdActive) cmdExit();
+      } else if (!e.target.closest("button,textarea,a,input")) {
         cmdSelect(idx, false);
       }
     });
