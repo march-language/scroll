@@ -39,9 +39,14 @@ if (!window._cmReady) {
   };
 }
 let pendingRun = null;
+let runAllTotal = 0;   // total code cells when runAll was started
+let runAllDone  = 0;   // cells completed so far in runAll
 let inspectorVars = {};   // name -> value string
 let inspectorOpen = false;
 const runPolls = {};  // code-cell polling intervals
+const lastStillRunning = {};  // idx -> timestamp of last still_running/output msg
+const HUNG_TIMEOUT_MS = 90000; // 90 seconds
+const hungTimers = {};  // idx -> setInterval id for hung detection
 
 // ── WebSocket ────────────────────────────────────────────────────────────────
 
@@ -55,6 +60,7 @@ function connect() {
   ws.onclose = () => {
     // Clear all running poll intervals so they don't fire against a dead socket.
     Object.keys(runPolls).forEach(idx => stopRunPoll(Number(idx)));
+    Object.keys(hungTimers).forEach(idx => stopHungTimer(Number(idx)));
     setStatus("err", "disconnected");
     setTimeout(connect, 2000);
   };
@@ -85,15 +91,21 @@ function handleMsg(msg) {
     if (cells[idx]) { cells[idx].running = true; cells[idx]._start_ms = Date.now(); cells[idx].live_output = ""; updateCell(idx); }
     setStatus("running", "running…");
     startRunPoll(idx);
+    startHungTimer(idx);
   } else if (msg.type === "still_running") {
     const idx = msg.index;
     if (cells[idx]) {
       if (msg.live !== undefined) cells[idx].live_output = msg.live;
+      lastStillRunning[idx] = Date.now();
+      // Clear any hung warning since we got activity
+      const wrap = document.querySelector(`[data-idx="${idx}"]`);
+      if (wrap) { const w = wrap.querySelector(".hung-warning"); if (w) w.remove(); }
       updateCell(idx);  // refreshes elapsed counter + live output
     }
   } else if (msg.type === "output") {
     const idx = msg.index;
     stopRunPoll(idx);
+    stopHungTimer(idx);
     if (cells[idx]) {
       cells[idx].running = false;
       cells[idx].live_output = "";
@@ -105,12 +117,16 @@ function handleMsg(msg) {
     }
     if (msg.vars) updateInspector(msg.vars);
     if (pendingRun !== null) {
+      runAllDone++;
       const next = nextCodeCell(pendingRun + 1);
       if (next !== -1) {
         pendingRun = next;
         runCell(next);
+        setStatus("running", "running cell " + (runAllDone + 1) + " / " + runAllTotal);
       } else {
         pendingRun = null;
+        runAllTotal = 0;
+        runAllDone  = 0;
         setStatus("ok", "done");
       }
     } else {
@@ -142,7 +158,7 @@ function handleMsg(msg) {
     showToast("Package error: " + msg.name + " — " + msg.message, "err");
   } else if (msg.type === "error") {
     setStatus("err", msg.message);
-    if (pendingRun !== null) { pendingRun = null; }
+    if (pendingRun !== null) { pendingRun = null; runAllTotal = 0; runAllDone = 0; }
     const saveAsModal = document.getElementById("saveas-modal");
     if (saveAsModal && saveAsModal.style.display !== "none") {
       const errEl = document.getElementById("saveas-error");
@@ -168,8 +184,48 @@ function stopRunPoll(idx) {
   }
 }
 
+function startHungTimer(idx) {
+  stopHungTimer(idx);
+  lastStillRunning[idx] = Date.now();
+  hungTimers[idx] = setInterval(() => {
+    if (!cells[idx] || !cells[idx].running) { stopHungTimer(idx); return; }
+    if (Date.now() - (lastStillRunning[idx] || 0) > HUNG_TIMEOUT_MS) {
+      const wrap = document.querySelector(`[data-idx="${idx}"]`);
+      if (wrap) {
+        let warn = wrap.querySelector(".hung-warning");
+        if (!warn) {
+          warn = document.createElement("div");
+          warn.className = "hung-warning";
+          warn.textContent = "⚠ No output for 90 s — process may have hung.";
+          const liveOut = wrap.querySelector(".cell-live-out");
+          if (liveOut) liveOut.appendChild(warn);
+          else {
+            const codeDiv = wrap.querySelector(".cell-code");
+            if (codeDiv) codeDiv.appendChild(warn);
+          }
+        }
+      }
+    }
+  }, 5000);
+}
+
+function stopHungTimer(idx) {
+  if (hungTimers[idx]) {
+    clearInterval(hungTimers[idx]);
+    delete hungTimers[idx];
+  }
+  delete lastStillRunning[idx];
+  // Clear any existing warning
+  const wrap = document.querySelector(`[data-idx="${idx}"]`);
+  if (wrap) {
+    const warn = wrap.querySelector(".hung-warning");
+    if (warn) warn.remove();
+  }
+}
+
 function stopRun(idx) {
   stopRunPoll(idx);
+  stopHungTimer(idx);
   send({type:"stop_run", index:idx});
 }
 
@@ -185,6 +241,14 @@ function nbSource() {
 
 function runCell(idx) {
   if (cells[idx] && cells[idx].kind === "code") {
+    // 3.7: if a runAll is in progress, abort it and stop the running cell
+    if (pendingRun !== null && pendingRun !== idx) {
+      const inProgress = pendingRun;
+      pendingRun = null;
+      runAllTotal = 0;
+      runAllDone  = 0;
+      stopRun(inProgress);
+    }
     send({type:"save", content: nbSource()});
     const env = getEnvString();
     send({type:"run", index:idx, env: env || undefined});
@@ -209,9 +273,11 @@ function runAll() {
   Object.keys(runPolls).forEach(idx => stopRunPoll(Number(idx)));
   cells.forEach(c => { c.output=""; c.error=null; c.running=false; c._dirty=false; c.live_output=""; });
   render();
+  runAllTotal = cells.filter(c => c.kind === "code").length;
+  runAllDone  = 0;
   pendingRun = first;
   runCell(first);
-  setStatus("running", "running…");
+  setStatus("running", "running cell 1 / " + runAllTotal);
 }
 
 function clearCell(idx) {
@@ -285,10 +351,13 @@ function openSaveAs() {
   modal.style.display = "flex";
   inp.focus();
   inp.select();
+  trapFocus(modal);
 }
 
 function closeSaveAs() {
-  document.getElementById("saveas-modal").style.display = "none";
+  const modal = document.getElementById("saveas-modal");
+  releaseFocus(modal);
+  modal.style.display = "none";
 }
 
 function confirmSaveAs() {
@@ -324,11 +393,14 @@ function openEnvPanel() {
   const modal = document.getElementById("env-modal");
   modal.style.display = "flex";
   renderEnvRows();
+  trapFocus(modal);
 }
 
 function closeEnvPanel() {
+  const modal = document.getElementById("env-modal");
+  releaseFocus(modal);
   collectEnvFromDOM();
-  document.getElementById("env-modal").style.display = "none";
+  modal.style.display = "none";
 }
 
 function renderEnvRows() {
@@ -380,13 +452,17 @@ let logPollId = null;
 
 function openLogPanel() {
   if (logPollId) clearInterval(logPollId);
-  document.getElementById("log-panel").style.display = "flex";
+  const panel = document.getElementById("log-panel");
+  panel.style.display = "flex";
   send({type:"read_log"});
   logPollId = setInterval(() => send({type:"read_log"}), 3000);
+  trapFocus(panel);
 }
 
 function closeLogPanel() {
-  document.getElementById("log-panel").style.display = "none";
+  const panel = document.getElementById("log-panel");
+  releaseFocus(panel);
+  panel.style.display = "none";
   if (logPollId) { clearInterval(logPollId); logPollId = null; }
 }
 
@@ -658,10 +734,10 @@ function markdownCell(idx, cell) {
     <div class="cell-md-header">
       <span class="cell-md-label">markdown</span>
       <div class="cell-md-actions">
-        <button class="add-btn" onclick="moveCell(${idx},-1)" title="Move up">↑</button>
-        <button class="add-btn" onclick="moveCell(${idx},1)" title="Move down">↓</button>
-        <button class="add-btn" onclick="event.stopPropagation();toggleMdEdit(${idx})" title="${editing?'Done':'Edit'}">${editing?'✓':'✎'}</button>
-        <button class="add-btn" onclick="deleteCell(${idx})" title="Delete">✕</button>
+        <button class="add-btn" onclick="moveCell(${idx},-1)" title="Move up" aria-label="Move up">↑</button>
+        <button class="add-btn" onclick="moveCell(${idx},1)" title="Move down" aria-label="Move down">↓</button>
+        <button class="add-btn" onclick="event.stopPropagation();toggleMdEdit(${idx})" title="${editing?'Done':'Edit'}" aria-label="${editing?'Done editing':'Edit'}">${editing?'✓':'✎'}</button>
+        <button class="add-btn" onclick="deleteCell(${idx})" title="Delete" aria-label="Delete">✕</button>
       </div>
     </div>
     <div class="cell-md" onclick="if(!event.target.closest('button'))toggleMdEdit(${idx})">${renderMd(cell.source)||'<span style="color:#4b5563;font-style:italic">Click to edit…</span>'}</div>
@@ -763,8 +839,8 @@ function codeCell(idx, cell) {
   const slowBadge = (!cell.running && isPotentiallyLongRunning(cell.source)) ? `<span class="slow-badge" title="May take a while — use ⬛ to stop">⏱</span>` : "";
   const srcCollapsed = !!cell._src_collapsed;
   const outCollapsed = !!cell._out_collapsed;
-  const srcToggle = `<button class="add-btn" onclick="toggleSrcCollapse(${idx})" title="${srcCollapsed?'Expand source':'Collapse source'}">${srcCollapsed?'⌄':'⌃'}</button>`;
-  const outToggle = `<button class="add-btn" onclick="toggleOutCollapse(${idx})" title="${outCollapsed?'Expand output':'Collapse output'}">${outCollapsed?'▸':'▾'}</button>`;
+  const srcToggle = `<button class="add-btn" onclick="toggleSrcCollapse(${idx})" title="${srcCollapsed?'Expand source':'Collapse source'}" aria-label="${srcCollapsed?'Expand source':'Collapse source'}">${srcCollapsed?'⌄':'⌃'}</button>`;
+  const outToggle = `<button class="add-btn" onclick="toggleOutCollapse(${idx})" title="${outCollapsed?'Expand output':'Collapse output'}" aria-label="${outCollapsed?'Expand output':'Collapse output'}">${outCollapsed?'▸':'▾'}</button>`;
   const srcPreview = srcCollapsed ? `<div class="src-preview" onclick="toggleSrcCollapse(${idx})">${esc(cell.source.split('\\n')[0])}</div>` : "";
   const hasOut = !!(cell.output || cell.error);
   const copyBtn = hasOut ? `<button class="copy-btn" onclick="copyOutput(${idx})">Copy</button>` : "";
@@ -780,17 +856,17 @@ function codeCell(idx, cell) {
   const srcCls = srcCollapsed ? " src-collapsed" : "";
   const outCls = outCollapsed ? " out-collapsed" : "";
   const actionBtn = cell.running
-    ? `<button class="stop-btn" onclick="stopRun(${idx})">⬛ Stop</button>`
-    : `<button class="run-btn" onclick="runCell(${idx})">▶ Run</button>`;
+    ? `<button class="stop-btn" onclick="stopRun(${idx})" aria-label="Stop">⬛ Stop</button>`
+    : `<button class="run-btn" onclick="runCell(${idx})" aria-label="Run">▶ Run</button>`;
   return `<div class="cell-code${cls}${srcCls}${outCls}"${dirtyAttr}>
     <div class="cell-header">
       <span class="cell-label${lblCls}">${lbl}</span>${staleBadge}${slowBadge}
       <div class="add-btns">
         ${srcToggle}${outToggle}
-        <button class="add-btn" onclick="moveCell(${idx},-1)" title="Move up">↑</button>
-        <button class="add-btn" onclick="moveCell(${idx},1)" title="Move down">↓</button>
-        <button class="add-btn" onclick="clearCell(${idx})" title="Clear output">○</button>
-        <button class="add-btn" onclick="deleteCell(${idx})" title="Delete">✕</button>
+        <button class="add-btn" onclick="moveCell(${idx},-1)" title="Move up" aria-label="Move up">↑</button>
+        <button class="add-btn" onclick="moveCell(${idx},1)" title="Move down" aria-label="Move down">↓</button>
+        <button class="add-btn" onclick="clearCell(${idx})" title="Clear output" aria-label="Clear output">○</button>
+        <button class="add-btn" onclick="deleteCell(${idx})" title="Delete" aria-label="Delete">✕</button>
       </div>
       ${actionBtn}
     </div>
@@ -815,6 +891,16 @@ function updateCell(idx) {
   } else if (cell.kind === "code") {
     wrap.innerHTML = codeCell(idx, cell);
     attachEditorEvents(wrap, idx);
+    // 3.4: auto-scroll live output unless user has scrolled up
+    if (cell.running && cell.live_output) {
+      const liveEl = wrap.querySelector(".cell-live-out pre");
+      if (liveEl) {
+        const atBottom = liveEl.scrollTop >= liveEl.scrollHeight - liveEl.clientHeight - 32;
+        if (atBottom || liveEl.scrollHeight <= liveEl.clientHeight) {
+          liveEl.scrollTop = liveEl.scrollHeight;
+        }
+      }
+    }
   } else if (cell.kind === "section") {
     wrap.innerHTML = sectionCell(idx, cell);
   }
@@ -1121,12 +1207,58 @@ function convertCell(idx, toKind) {
   setTimeout(() => cmdSelect(idx, false), 10);
 }
 
+// ── Focus trap for modals ─────────────────────────────────────────────────────
+
+const FOCUSABLE = 'a[href],button:not([disabled]),input,select,textarea,[tabindex]:not([tabindex="-1"])';
+
+function trapFocus(modalEl) {
+  if (!modalEl) return;
+  const focusable = Array.from(modalEl.querySelectorAll(FOCUSABLE));
+  if (focusable.length > 0 && !modalEl.contains(document.activeElement)) focusable[0].focus();
+  function handler(e) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      releaseFocus(modalEl);
+      // Determine which close function to call based on modal id
+      const id = modalEl.id;
+      if (id === "saveas-modal") closeSaveAs();
+      else if (id === "env-modal") closeEnvPanel();
+      else if (id === "log-panel") closeLogPanel();
+      else if (id === "cheatsheet") hideCheatsheet();
+      return;
+    }
+    if (e.key !== "Tab") return;
+    const current = focusable.filter(el => !el.offsetParent && el.offsetParent !== null || el.offsetParent);
+    const live = Array.from(modalEl.querySelectorAll(FOCUSABLE));
+    if (live.length === 0) return;
+    const first = live[0];
+    const last  = live[live.length - 1];
+    if (e.shiftKey) {
+      if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+    } else {
+      if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+    }
+  }
+  modalEl._focusTrapHandler = handler;
+  modalEl.addEventListener("keydown", handler);
+}
+
+function releaseFocus(modalEl) {
+  if (!modalEl || !modalEl._focusTrapHandler) return;
+  modalEl.removeEventListener("keydown", modalEl._focusTrapHandler);
+  delete modalEl._focusTrapHandler;
+}
+
 function showCheatsheet() {
-  document.getElementById("cheatsheet").classList.add("visible");
+  const el = document.getElementById("cheatsheet");
+  el.classList.add("visible");
+  trapFocus(el);
 }
 
 function hideCheatsheet() {
-  document.getElementById("cheatsheet").classList.remove("visible");
+  const el = document.getElementById("cheatsheet");
+  releaseFocus(el);
+  el.classList.remove("visible");
 }
 
 document.getElementById("cheatsheet").addEventListener("click", (e) => {
@@ -1164,10 +1296,12 @@ document.addEventListener("keydown", (e) => {
     e.preventDefault();
     switch(e.key) {
       case "j": case "ArrowDown": {
+        if (e.shiftKey) { moveCell(cmdSelected, 1); setTimeout(() => cmdSelect(Math.min(cmdSelected + 1, cells.length - 1), false), 20); break; }
         const next = cmdSelected < cells.length - 1 ? cmdSelected + 1 : cmdSelected;
         cmdSelect(next); break;
       }
       case "k": case "ArrowUp": {
+        if (e.shiftKey) { moveCell(cmdSelected, -1); setTimeout(() => cmdSelect(Math.max(cmdSelected - 1, 0), false), 20); break; }
         const prev = cmdSelected > 0 ? cmdSelected - 1 : 0;
         cmdSelect(prev); break;
       }
