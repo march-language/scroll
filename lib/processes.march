@@ -35,12 +35,55 @@ pfn run_exit_path(idx) do "/tmp/__forge_nb_run_" ++ String.from_int(idx) ++ "__.
 pfn run_pid_key(idx)   do String.from_int(idx) ++ ":p" end
 pfn run_cidx_key(idx)  do String.from_int(idx) ++ ":c" end
 
+-- Check that a string is a valid shell identifier: [A-Za-z_][A-Za-z0-9_]*
+pfn is_valid_env_key(s) do
+  fn is_alpha_under(c) do
+    (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c == "_"
+  end
+  fn is_alnum_under(c) do
+    is_alpha_under(c) || (c >= "0" && c <= "9")
+  end
+  fn check(s, i, len) do
+    if i >= len do true
+    else
+      let c = String.slice(s, i, 1)
+      if is_alnum_under(c) do check(s, i + 1, len)
+      else false
+      end
+    end
+  end
+  let len = String.byte_size(s)
+  if len == 0 do false
+  else
+    let first = String.slice(s, 0, 1)
+    if is_alpha_under(first) do check(s, 1, len)
+    else false
+    end
+  end
+end
+
+-- Build a shell-safe env prefix from a newline-separated KEY=VALUE string.
+pfn env_prefix(env_str) do
+  if String.is_empty(trim(env_str)) do ""
+  else
+    let lines = List.filter(String.split(env_str, "\n"), fn l -> not(String.is_empty(trim(l))))
+    let exports = List.filter_map(lines, fn line ->
+      match String.split_first(line, "=") do
+        None -> None
+        Some((k, v)) ->
+          let k = trim(k)
+          if not(is_valid_env_key(k)) do None
+          else Some("export " ++ sh_quote(k) ++ "=" ++ sh_quote(v) ++ "; ")
+          end
+      end
+    )
+    String.join(exports, "")
+  end
+end
+
 -- Spawn a code-cell runner in the background; store PID + code-idx in Vault.
-fn start_run_proc(cells, run_through_idx, march_bin) do
+fn start_run_proc(cells, run_through_idx, march_bin, env_str) do
   let cidx  = Runner.find_code_idx(cells, run_through_idx, 0, 0)
-  -- Issue #4: find_code_idx returns -1 when run_through_idx points at a non-code
-  -- cell and no code cell precedes it.  Running in that case would produce silent
-  -- empty output, which is confusing.  Return an error instead.
   if cidx < 0 do
     Err("no code cell at or before index " ++ String.from_int(run_through_idx))
   else
@@ -55,7 +98,8 @@ fn start_run_proc(cells, run_through_idx, march_bin) do
       let _ = File.write(outp, "")
       let _ = File.write(errp, "")
       let _ = File.write(exitp, "")
-      let shell = "{ " ++ sh_quote(march_bin) ++ " " ++ tmp ++ " >" ++ outp ++ " 2>" ++ errp ++ "; echo $? >" ++ exitp ++ "; } & echo $!"
+      let ep = env_prefix(env_str)
+      let shell = "{ " ++ ep ++ sh_quote(march_bin) ++ " " ++ tmp ++ " >" ++ outp ++ " 2>" ++ errp ++ "; echo $? >" ++ exitp ++ "; } & echo $!"
       match Process.run("sh", ["-c", shell]) do
         Err(msg) -> Err("spawn failed: " ++ msg)
         Ok(result) ->
@@ -69,7 +113,7 @@ fn start_run_proc(cells, run_through_idx, march_bin) do
           end
       end
   end
-  end  -- end cidx < 0 guard
+  end
 end
 
 -- Poll a running code-cell process.
@@ -150,17 +194,16 @@ pfn server_ns()          do "__forge_nb_servers__" end
 
 -- Spawn a server cell as a background OS process (via shell `&`).
 -- Stores the PID string in the Vault namespace. Returns Ok(pid) or Err(msg).
-fn start_server_proc(src, idx, march_bin) do
+fn start_server_proc(src, idx, march_bin, env_str) do
   let tmp = server_tmp_path(idx)
   let log = server_log_path(idx)
   let runner = Runner.generate_server_runner(src)
   match File.write(tmp, runner) do
     Err(msg) -> Err("failed to write server temp: " ++ msg)
     Ok(_) ->
-      -- Clear old log
       let _ = File.write(log, "")
-      -- Start background: sh -c "march /tmp/... > /tmp/...log 2>&1 & echo $!"
-      let shell_cmd = sh_quote(march_bin) ++ " " ++ tmp ++ " > " ++ log ++ " 2>&1 & echo $!"
+      let ep = env_prefix(env_str)
+      let shell_cmd = ep ++ sh_quote(march_bin) ++ " " ++ tmp ++ " > " ++ log ++ " 2>&1 & echo $!"
       match Process.run("sh", ["-c", shell_cmd]) do
         Err(msg) -> Err("spawn failed: " ++ msg)
         Ok(result) ->

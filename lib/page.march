@@ -21,8 +21,8 @@ mod Page do
   -- escaping would be redundant.
   --
   -- Public API (fn):
-  --   ui_html/2 : return the full HTML page as a String
-  fn ui_html(nb_path, port) do
+  --   ui_html/3 : return the full HTML page as a String
+  fn ui_html(nb_path, port, is_temp) do
     let head_html =
       "<!DOCTYPE html>\n" ++
       "<html lang=\"en\">\n" ++
@@ -35,8 +35,9 @@ mod Page do
       "<script type=\"module\" src=\"/assets/js/editor.js\"></script>\n" ++
       "</head>\n"
 
+    let temp_attr = if is_temp do " data-is-temp=\"1\"" else "" end
     let toolbar_html =
-      "<body data-nb-path=\"" ++ nb_path ++ "\" data-ws-port=\"" ++ String.from_int(port) ++ "\">\n" ++
+      "<body data-nb-path=\"" ++ nb_path ++ "\" data-ws-port=\"" ++ String.from_int(port) ++ "\"" ++ temp_attr ++ ">\n" ++
       "<div id=\"toolbar\">\n" ++
       "<h1 id=\"nb-title\">" ++ nb_path ++ "</h1>\n" ++
       "<button class=\"btn btn-secondary\" id=\"btn-add-md\" title=\"Add Markdown cell\"><span class=\"btn-ic\">+ md</span><span class=\"btn-lb\">+ Markdown</span></button>\n" ++
@@ -48,6 +49,8 @@ mod Page do
       "<button class=\"btn btn-secondary\" id=\"btn-save\" title=\"Save notebook\"><span class=\"btn-ic\">⇣</span><span class=\"btn-lb\">Save</span></button>\n" ++
       "<button class=\"btn btn-secondary\" id=\"btn-export\" title=\"Export notebook to HTML\"><span class=\"btn-ic\">↗</span><span class=\"btn-lb\">Export HTML</span></button>\n" ++
       "<button class=\"btn btn-secondary\" id=\"btn-inspector\" title=\"Toggle variable inspector\"><span class=\"btn-ic\">𝑥</span><span class=\"btn-lb\">𝑥 Inspector</span></button>\n" ++
+      "<button class=\"btn btn-secondary\" id=\"btn-env\" title=\"Environment variables\"><span class=\"btn-ic\">$</span><span class=\"btn-lb\">$ Env</span></button>\n" ++
+      "<button class=\"btn btn-secondary\" id=\"btn-log\" title=\"Debug log\"><span class=\"btn-ic\">⋯</span><span class=\"btn-lb\">Log</span></button>\n" ++
       "<button id=\"theme-toggle\" title=\"Toggle light/dark theme\">☽</button>\n" ++
       "<span id=\"mode-badge\">COMMAND</span>\n" ++
       "<div id=\"status\">connecting</div>\n" ++
@@ -92,6 +95,32 @@ mod Page do
       "<span id=\"search-count\"></span>\n" ++
       "<button class=\"btn btn-secondary\" onclick=\"closeSearch()\">✕</button>\n" ++
       "</div>\n" ++
+      "</div>\n" ++
+      "<div id=\"saveas-modal\" style=\"display:none\">\n" ++
+      "<div id=\"saveas-inner\">\n" ++
+      "<h3>Save As</h3>\n" ++
+      "<label for=\"saveas-path\">File path</label>\n" ++
+      "<input id=\"saveas-path\" type=\"text\" placeholder=\"/path/to/notebook.scrollmd\" autocomplete=\"off\" />\n" ++
+      "<div id=\"saveas-error\" style=\"display:none\"></div>\n" ++
+      "<div id=\"saveas-actions\">\n" ++
+      "<button class=\"btn btn-primary\" id=\"saveas-confirm\">Save</button>\n" ++
+      "<button class=\"btn btn-secondary\" id=\"saveas-cancel\">Cancel</button>\n" ++
+      "</div>\n" ++
+      "</div>\n" ++
+      "</div>\n" ++
+      "<div id=\"env-modal\" style=\"display:none\">\n" ++
+      "<div id=\"env-inner\">\n" ++
+      "<div id=\"env-header\"><h3>Environment Variables</h3><button class=\"btn btn-secondary\" onclick=\"closeEnvPanel()\">✕</button></div>\n" ++
+      "<div id=\"env-body\"></div>\n" ++
+      "<div id=\"env-actions\">\n" ++
+      "<button class=\"btn btn-secondary\" id=\"env-add\">+ Add Variable</button>\n" ++
+      "<button class=\"btn btn-primary\" id=\"env-save\">Done</button>\n" ++
+      "</div>\n" ++
+      "</div>\n" ++
+      "</div>\n" ++
+      "<div id=\"log-panel\" style=\"display:none\">\n" ++
+      "<div id=\"log-header\">Debug Log <span id=\"log-path\"></span><button onclick=\"closeLogPanel()\" title=\"Close\">✕</button></div>\n" ++
+      "<pre id=\"log-body\"></pre>\n" ++
       "</div>\n" ++
       "<div id=\"main-layout\">\n" ++
       "<div id=\"notebook\"></div>\n" ++

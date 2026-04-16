@@ -36,15 +36,19 @@ fn output_msg(idx, out, err_opt, vars)  do Protocol.output_msg(idx, out, err_opt
 fn notebook_msg(content, cells)         do Protocol.notebook_msg(content, cells) end
 fn json_get_str(jv, key)                do Protocol.json_get_str(jv, key) end
 fn json_get_int(jv, key)                do Protocol.json_get_int(jv, key) end
-fn ui_html(nb_path, port)               do Page.ui_html(nb_path, port) end
+fn ui_html(nb_path, port, is_temp)       do Page.ui_html(nb_path, port, is_temp) end
 fn process_forge_adds(stdout, nb_path)  do Runner.process_forge_adds(stdout, nb_path) end
+fn log_start(nb_path)                   do DebugLog.start_log(nb_path) end
+fn log_append(cat, msg)                 do DebugLog.append(cat, msg) end
+fn log_read_all()                       do DebugLog.read_all() end
+fn log_get_path()                       do DebugLog.get_path() end
 fn read_server_log(idx)                 do Processes.read_server_log(idx) end
 fn server_is_running(idx)               do Processes.server_is_running(idx) end
 fn stop_server_proc(idx)                do Processes.stop_server_proc(idx) end
 fn stop_run_proc(idx)                   do Processes.stop_run_proc(idx) end
-fn start_run_proc(cells, idx, bin)      do Processes.start_run_proc(cells, idx, bin) end
+fn start_run_proc(cells, idx, bin, env)  do Processes.start_run_proc(cells, idx, bin, env) end
 fn check_run_proc(idx)                  do Processes.check_run_proc(idx) end
-fn start_server_proc(src, idx, bin)     do Processes.start_server_proc(src, idx, bin) end
+fn start_server_proc(src, idx, bin, env) do Processes.start_server_proc(src, idx, bin, env) end
 
 -- ── Asset serving ─────────────────────────────────────────────────────────────
 -- Assets live under <archive_root>/assets/.  At runtime we discover the
@@ -82,10 +86,10 @@ end
 
 -- ── HTTP router ───────────────────────────────────────────────────────────────
 
-fn router(nb_path, display_title, port, march_bin, conn) do
+fn router(nb_path, display_title, port, march_bin, is_temp, conn) do
   match (HttpServer.method(conn), HttpServer.path_info(conn)) do
     (:get, Nil) ->
-      conn |> HttpServer.html(200, Page.ui_html(display_title, port))
+      conn |> HttpServer.html(200, Page.ui_html(display_title, port, is_temp))
 
     (:get, Cons("ws", Nil)) ->
       -- Issue #3: reject WebSocket upgrades from origins other than localhost.
@@ -190,7 +194,7 @@ end
 fn main() do
   let from_env = System.env("FORGE_NB_INPUT")
 
-  let (nb_path, port, march_bin, display_title) = match from_env do
+  let (nb_path, port, march_bin, display_title, is_temp) = match from_env do
     Some(p) ->
       let port = match System.env("FORGE_NB_PORT") do
         Some(s) -> match String.to_int(s) do Ok(n) -> n | Err(_) -> 4040 end
@@ -202,7 +206,7 @@ fn main() do
       let title = match System.env("FORGE_NB_TITLE") do
         Some(t) -> t | None -> p
       end
-      (p, port, march_bin, title)
+      (p, port, march_bin, title, false)
 
     None ->
       let args = task_args()
@@ -210,29 +214,31 @@ fn main() do
       let march_bin = match System.env("FORGE_NB_MARCH") do
         Some(b) -> b | None -> "march"
       end
-      let nb_path = match parse_file(args) do
+      let (nb_path, is_temp) = match parse_file(args) do
         Some(f) ->
           let abs = if String.starts_with(f, "/") do f
                     else System.cwd() ++ "/" ++ f
                     end
           if not(File.exists(abs)) do create_notebook(abs) else () end
-          abs
+          (abs, false)
         None ->
           let tmp = "/tmp/scroll_" ++ String.from_int(System.pid()) ++ ".scrollmd"
           create_notebook(tmp)
           IO.puts("tip: use Save As in the browser to persist your notebook")
-          tmp
+          (tmp, true)
       end
       let title = Path.basename(nb_path)
-      (nb_path, port, march_bin, title)
+      (nb_path, port, march_bin, title, is_temp)
   end
 
+  let log_path = DebugLog.start_log(nb_path)
   IO.puts("scroll: serving " ++ nb_path ++ " on http://localhost:" ++ String.from_int(port))
+  IO.puts("scroll: debug log: " ++ log_path)
   IO.puts("scroll: press Ctrl-C to stop")
 
   let server = HttpServer.new(port)
   let server = HttpServer.plug(server, fn req_conn ->
-    router(nb_path, display_title, port, march_bin, req_conn)
+    router(nb_path, display_title, port, march_bin, is_temp, req_conn)
   )
   HttpServer.listen(server)
 end
