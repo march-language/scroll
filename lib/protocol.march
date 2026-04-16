@@ -72,6 +72,103 @@ end
 -- `\\"` (backslash + quote): replacing `\"` before `\\` consumes the quote
 -- and leaves a dangling backslash.  Processing left-to-right in one pass
 -- avoids this entirely.
+-- Decode a single hex nibble character (0-9, a-f, A-F) to its integer value.
+-- Returns -1 for invalid input.
+pfn hex_nibble(c) do
+  match c do
+    "0" -> 0
+    "1" -> 1
+    "2" -> 2
+    "3" -> 3
+    "4" -> 4
+    "5" -> 5
+    "6" -> 6
+    "7" -> 7
+    "8" -> 8
+    "9" -> 9
+    "a" -> 10
+    "b" -> 11
+    "c" -> 12
+    "d" -> 13
+    "e" -> 14
+    "f" -> 15
+    "A" -> 10
+    "B" -> 11
+    "C" -> 12
+    "D" -> 13
+    "E" -> 14
+    "F" -> 15
+    _   -> -1
+  end
+end
+
+-- Parse four hex characters starting at `s[0]` into a codepoint (0–0xFFFF).
+-- Returns -1 if any character is not a valid hex digit.
+pfn parse_hex4(s) do
+  if bs(s) < 4 do -1
+  else
+    let a = hex_nibble(String.slice(s, 0, 1))
+    let b = hex_nibble(String.slice(s, 1, 1))
+    let c = hex_nibble(String.slice(s, 2, 1))
+    let d = hex_nibble(String.slice(s, 3, 1))
+    if a < 0 || b < 0 || c < 0 || d < 0 do -1
+    else (a * 4096) + (b * 256) + (c * 16) + d
+    end
+  end
+end
+
+-- Encode a Unicode codepoint (0–1114111) as a UTF-8 string.
+-- Codepoints outside valid Unicode ranges emit the replacement char (U+FFFD).
+pfn codepoint_to_utf8(cp) do
+  if cp < 0 do
+    "?"
+  else
+    if cp <= 127 do                    -- U+0000..U+007F: 1 byte
+      Char.to_string(Char.from_int(cp))
+    else
+      if cp <= 2047 do                 -- U+0080..U+07FF: 2 bytes
+        let b1 = 192 + (cp / 64)      -- 0xC0 = 192
+        let b2 = 128 + (cp % 64)      -- 0x80 = 128
+        Char.to_string(Char.from_int(b1)) ++ Char.to_string(Char.from_int(b2))
+      else
+        if cp <= 65535 do              -- U+0800..U+FFFF: 3 bytes
+          let b1 = 224 + (cp / 4096)  -- 0xE0 = 224
+          let b2 = 128 + ((cp / 64) % 64)
+          let b3 = 128 + (cp % 64)
+          Char.to_string(Char.from_int(b1)) ++ Char.to_string(Char.from_int(b2)) ++
+          Char.to_string(Char.from_int(b3))
+        else
+          let cp2 = cp - 65536        -- U+10000..U+10FFFF: 4 bytes
+          let b1 = 240 + (cp2 / 262144) -- 0xF0 = 240
+          let b2 = 128 + ((cp2 / 4096) % 64)
+          let b3 = 128 + ((cp2 / 64) % 64)
+          let b4 = 128 + (cp2 % 64)
+          Char.to_string(Char.from_int(b1)) ++ Char.to_string(Char.from_int(b2)) ++
+          Char.to_string(Char.from_int(b3)) ++ Char.to_string(Char.from_int(b4))
+        end
+      end
+    end
+  end
+end
+
+-- Decode \uXXXX escape: `cp` is the parsed codepoint, `rest` starts at the 4 hex digits.
+-- Surrogate codepoints (55296..57343) emit the replacement character (U+FFFD = 65533).
+-- Full surrogate-pair combining is omitted to keep the match structure simple.
+pfn decode_unicode_escape(cp, rest) do
+  let tail = String.slice(rest, 4, bs(rest) - 4)
+  if cp < 0 do
+    -- Invalid hex digits: preserve escape as-is (consume nothing from rest)
+    ("\\u", rest)
+  else
+    if cp >= 55296 && cp <= 57343 do
+      -- Surrogate codepoint: emit replacement char and skip the 4 hex digits
+      (codepoint_to_utf8(65533), tail)
+    else
+      (codepoint_to_utf8(cp), tail)
+    end
+  end
+end
+
 fn unescape_json(s) do
   fn go(rem, acc) do
     match String.split_first(rem, "\\") do
@@ -82,18 +179,19 @@ fn unescape_json(s) do
         else
           let esc  = String.slice(after, 0, 1)
           let rest = String.slice(after, 1, bs(after) - 1)
-          let ch = match esc do
-            "\\" -> "\\"
-            "\"" -> "\""
-            "n"  -> "\n"
-            "r"  -> "\r"
-            "t"  -> "\t"
-            "b"  -> "\b"
-            "f"  -> "\f"
-            "/"  -> "/"
-            _    -> "\\" ++ esc   -- unknown / \uXXXX: preserve as-is
+          let (ch, rest2) = match esc do
+            "\\" -> ("\\", rest)
+            "\"" -> ("\"", rest)
+            "n"  -> ("\n", rest)
+            "r"  -> ("\r", rest)
+            "t"  -> ("\t", rest)
+            "b"  -> ("\b", rest)
+            "f"  -> ("\f", rest)
+            "/"  -> ("/", rest)
+            "u"  -> decode_unicode_escape(parse_hex4(rest), rest)
+            _    -> ("\\" ++ esc, rest)   -- unknown escape: preserve as-is
           end
-          go(rest, acc ++ before ++ ch)
+          go(rest2, acc ++ before ++ ch)
         end
       end
   end

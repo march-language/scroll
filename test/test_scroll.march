@@ -1007,6 +1007,40 @@ describe "start_run_proc + check_run_proc" do
     end
   end
 
+  -- Issue 2.2: start_run_proc must return Err when the target cell is Markdown
+  -- even when a Code cell precedes it.
+  test "returns error when idx points to markdown cell with code before it" do
+    let nb = "/tmp/test_scroll_run4.scrollmd"
+    -- Cells: idx 0 = Code, idx 1 = Markdown.  Running idx 1 should fail.
+    let cells = Scroll.parse_cells("```march\n42\n```\n\n# Section")
+    match Scroll.start_run_proc(cells, 1, "march", "", nb, "test_conn_4") do
+      Err(_) -> assert true
+      Ok(_) -> assert false
+    end
+  end
+
+end
+
+-- ── unescape_json Unicode tests (Phase 2.5) ──────────────────────────────────
+
+describe "unescape_json Unicode" do
+
+  test "\\u0041 decodes to A" do
+    -- unescape_json receives the raw content between the JSON string quotes.
+    -- The march string "\\u0041" at runtime is the 6-byte sequence \u0041.
+    assert (Scroll.unescape_json("\\u0041") == "A")
+  end
+
+  test "\\u00e9 decodes to two UTF-8 bytes" do
+    -- U+00E9 (é) encodes as two bytes in UTF-8 (0xC3 0xA9).
+    let result = Scroll.unescape_json("\\u00e9")
+    assert (String.byte_size(result) == 2)
+  end
+
+  test "plain ASCII strings are unchanged by unescape_json" do
+    assert (Scroll.unescape_json("hello") == "hello")
+  end
+
 end
 
 end

@@ -53,11 +53,16 @@ function connect() {
     ws.send(JSON.stringify({type:"load"}));
   };
   ws.onclose = () => {
+    // Clear all running poll intervals so they don't fire against a dead socket.
+    Object.keys(runPolls).forEach(idx => stopRunPoll(Number(idx)));
     setStatus("err", "disconnected");
     setTimeout(connect, 2000);
   };
   ws.onerror = () => {};
-  ws.onmessage = (e) => handleMsg(JSON.parse(e.data));
+  ws.onmessage = (e) => {
+    try { handleMsg(JSON.parse(e.data)); }
+    catch(err) { console.error("scroll: bad ws message", err, e.data); }
+  };
 }
 
 function send(obj) { if (ws && ws.readyState===1) ws.send(JSON.stringify(obj)); }
@@ -199,7 +204,10 @@ function nextCodeCell(from) {
 function runAll() {
   const first = firstCodeCell();
   if (first === -1) return;
-  cells.forEach(c => { c.output=""; c.error=null; c.running=false; c._dirty=false; });
+  // Stop any in-progress polls before resetting state — prevents stale
+  // intervals from firing poll_run for wrong indices after render().
+  Object.keys(runPolls).forEach(idx => stopRunPoll(Number(idx)));
+  cells.forEach(c => { c.output=""; c.error=null; c.running=false; c._dirty=false; c.live_output=""; });
   render();
   pendingRun = first;
   runCell(first);
@@ -399,6 +407,31 @@ function deleteCell(idx) {
   if (cells.length <= 1) return;
   if (cells[idx] && cells[idx].running && cells[idx].kind === "code") stopRun(idx);
   cells.splice(idx, 1);
+
+  // Fix up stale indices held in module-level state after the splice.
+  // pendingRun
+  if (pendingRun !== null) {
+    if (pendingRun === idx) pendingRun = null;
+    else if (pendingRun > idx) pendingRun--;
+  }
+  // runPolls: stop old intervals; restart with shifted keys for indices > idx
+  const shiftedPolls = {};
+  Object.keys(runPolls).forEach(k => {
+    const i = Number(k);
+    clearInterval(runPolls[i]);
+    if (i !== idx) {
+      const newIdx = i > idx ? i - 1 : i;
+      shiftedPolls[newIdx] = setInterval(() => { send({type:"poll_run", index:newIdx}); }, 300);
+    }
+  });
+  Object.keys(runPolls).forEach(k => delete runPolls[k]);
+  Object.assign(runPolls, shiftedPolls);
+  // cmdSelected
+  if (cmdSelected !== null) {
+    if (cmdSelected > idx) cmdSelected--;
+    else if (cmdSelected === idx) cmdSelected = Math.min(idx, cells.length - 1);
+  }
+
   render();
 }
 

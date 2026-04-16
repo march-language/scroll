@@ -211,17 +211,26 @@ fn write_cells(session_id, proc, cells, run_through_idx) do
 
   let (srcs, _target_code_n) = collect_code_sources(cells, run_through_idx)
 
-  -- Feed all cell sources; the REPL evaluates each, emitting __SCROLL_DONE__
+  -- Guard: there must be at least one code cell to run.  A run_through_idx
+  -- pointing past all code cells has skip_count = 0 which would incorrectly
+  -- treat the :reset sentinel as the target cell's output.
+  let num_code_cells = List.length(srcs)
+  if num_code_cells == 0 do
+    Err("no code cells at or before index " ++ String.from_int(run_through_idx))
+  else
+
+  -- Feed all cell sources; the REPL evaluates each, emitting the sentinel
   -- after every one.  We don't need to wait between them — the pipe buffers.
   send_all(proc, srcs)
 
   -- skip_count = 1 (:reset sentinel) + (number of code cells - 1 for all but
   -- the target cell).  The last sentinel in srcs belongs to the target cell.
-  let num_code_cells = List.length(srcs)
   let skip_count = 1 + (num_code_cells - 1)
   let _ = Vault.ns_set(rt_ns(), rt_skip_key(session_id), String.from_int(skip_count))
   let _ = Vault.ns_set(rt_ns(), rt_out_key(session_id), rt_out_path(session_id))
   Ok(skip_count)
+
+  end
 end
 
 -- ── Output polling / live streaming ─────────────────────────────────────────

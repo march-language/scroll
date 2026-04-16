@@ -17,6 +17,8 @@
 
 mod Processes do
 
+import Cells
+
 pfn trim(s) do String.trim(s) end
 
 -- Session ID: combines the notebook path and the per-WebSocket connection ID
@@ -31,6 +33,16 @@ fn start_run_proc(cells, run_through_idx, march_bin, env_str, nb_path, conn_id) 
   if cidx < 0 do
     Err("no code cell at or before index " ++ String.from_int(run_through_idx))
   else
+  -- Guard: the target cell itself must be a Code cell.  Running a Markdown or
+  -- Section cell would silently attribute the last preceding code cell's output
+  -- to the wrong cell index, confusing the browser.
+  let target_is_code = match Cells.nth_cell(cells, run_through_idx) do
+    Some(Code(_)) -> true
+    _ -> false
+  end
+  if not(target_is_code) do
+    Err("cell " ++ String.from_int(run_through_idx) ++ " is not a code cell")
+  else
   let sid = session_id(nb_path, conn_id)
   -- Kill any existing REPL and start fresh so the new env_str takes effect
   -- and state from previous runs does not leak into this one.
@@ -42,7 +54,8 @@ fn start_run_proc(cells, run_through_idx, march_bin, env_str, nb_path, conn_id) 
         Ok(_skip) -> Ok(sid)
       end
   end
-  end
+  end  -- end if not(target_is_code)
+  end  -- end if cidx < 0
 end
 
 -- Poll for the target cell's result.

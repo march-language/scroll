@@ -1,11 +1,14 @@
 mod DebugLog do
 
+  -- debug_log.march — Lightweight append-only log for debugging scroll sessions.
+  --
+  -- Previously used Process.run("date") and Process.run("sh -c echo >> file") for
+  -- every append, which forked two processes per log line.  Under live-output
+  -- polling (300 ms poll × 2 forks) this added ≥6 forks/sec.
+  -- Now uses System.monotonic_time() for timestamps and File.append for writes.
+
   pfn log_ns() do "__scroll_log__" end
   pfn path_key() do "path" end
-
-  pfn sh_quote(s) do
-    "'" ++ String.replace_all(s, "'", "'\\''") ++ "'"
-  end
 
   pfn log_path() do
     match Vault.ns_get(log_ns(), path_key()) do
@@ -25,9 +28,9 @@ mod DebugLog do
 
   fn append(category, message) do
     let ts = timestamp()
-    let line = ts ++ " [" ++ category ++ "] " ++ message
+    let line = ts ++ " [" ++ category ++ "] " ++ message ++ "\n"
     let path = log_path()
-    let _ = Process.run("sh", ["-c", "echo " ++ sh_quote(line) ++ " >> " ++ sh_quote(path)])
+    let _ = File.append(path, line)
     ()
   end
 
@@ -40,11 +43,21 @@ mod DebugLog do
 
   fn get_path() do log_path() end
 
-  pfn timestamp() do
-    match Process.run("date", ["+%H:%M:%S"]) do
-      Ok(r) -> String.trim(Process.stdout(r))
-      Err(_) -> "??:??:??"
+  -- Zero-pad a single integer to at least 2 digits.
+  pfn pad2(n) do
+    if n < 10 do "0" ++ String.from_int(n)
+    else String.from_int(n)
     end
+  end
+
+  -- Format monotonic uptime as HH:MM:SS without forking a subprocess.
+  pfn timestamp() do
+    let ms = System.monotonic_time()
+    let total_secs = ms / 1000
+    let h = total_secs / 3600
+    let m = (total_secs / 60) % 60
+    let s = total_secs % 60
+    pad2(h) ++ ":" ++ pad2(m) ++ ":" ++ pad2(s)
   end
 
 end

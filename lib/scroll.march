@@ -35,6 +35,7 @@ fn output_msg(idx, out, err_opt, vars)  do Protocol.output_msg(idx, out, err_opt
 fn notebook_msg(content, cells)         do Protocol.notebook_msg(content, cells) end
 fn json_get_str(jv, key)                do Protocol.json_get_str(jv, key) end
 fn json_get_int(jv, key)                do Protocol.json_get_int(jv, key) end
+fn unescape_json(s)                     do Protocol.unescape_json(s) end
 fn ui_html(nb_path, port, is_temp)       do Page.ui_html(nb_path, port, is_temp) end
 fn process_forge_adds(stdout, nb_path)  do Runner.process_forge_adds(stdout, nb_path) end
 fn log_start(nb_path)                   do DebugLog.start_log(nb_path) end

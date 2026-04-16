@@ -78,9 +78,13 @@ mod Session do
         match json_get_str(jv, "content") do
         None -> WebSocket.send_frame(socket, err_frame("missing content"))
         Some(content) -> do
-          match File.write(nb_path, content) do
-          Err(e) -> WebSocket.send_frame(socket, err_frame(to_string(e)))
-          Ok(_) -> WebSocket.send_frame(socket, TextFrame("{\"type\":\"saved\"}"))
+          if String.byte_size(content) > 50000000 do
+            WebSocket.send_frame(socket, err_frame("notebook too large (> 50 MB)"))
+          else
+            match File.write(nb_path, content) do
+            Err(e) -> WebSocket.send_frame(socket, err_frame(to_string(e)))
+            Ok(_) -> WebSocket.send_frame(socket, TextFrame("{\"type\":\"saved\"}"))
+            end
           end
         end
         end
@@ -94,6 +98,10 @@ mod Session do
         (None, _) -> do WebSocket.send_frame(socket, err_frame("missing path")) nb_path end
         (_, None) -> do WebSocket.send_frame(socket, err_frame("missing content")) nb_path end
         (Some(new_path), Some(content)) -> do
+          if String.byte_size(content) > 50000000 do
+            WebSocket.send_frame(socket, err_frame("notebook too large (> 50 MB)"))
+            nb_path
+          else
           let abs_path = if String.starts_with(new_path, "/") do new_path
             else System.cwd() ++ "/" ++ new_path
             end
@@ -113,6 +121,7 @@ mod Session do
               abs_path
             end
             end
+          end
           end
         end
         end
