@@ -26,14 +26,11 @@ pfn session_id(nb_path, conn_id) do nb_path ++ ":" ++ conn_id end
 -- Spawn (or reuse) the persistent REPL, then feed all code cells 0..run_through_idx.
 -- Returns Ok(session_id) on success, Err(msg) on failure.
 fn start_run_proc(cells, run_through_idx, march_bin, env_str, nb_path, conn_id) do
-  -- Guard: must have at least one code cell at or before run_through_idx.
-  let cidx = Runner.find_code_idx(cells, run_through_idx, 0, 0)
-  if cidx < 0 do
-    Err("no code cell at or before index " ++ String.from_int(run_through_idx))
-  else
-  -- Guard: the target cell itself must be a Code cell.  Running a Markdown or
-  -- Section cell would silently attribute the last preceding code cell's output
-  -- to the wrong cell index, confusing the browser.
+  -- Guard: the target cell must be a Code cell.
+  -- Note: avoid calling Runner.find_code_idx here — cross-module ADT pattern
+  -- matching crashes the interpreter (March compiler bug with fn calls across
+  -- modules when the argument contains ADT variants from a third module).
+  -- The target_is_code check below subsumes the cidx < 0 guard.
   let target_is_code = match Cells.nth_cell(cells, run_through_idx) do
     Some(Code(_)) -> true
     _ -> false
@@ -53,23 +50,17 @@ fn start_run_proc(cells, run_through_idx, march_bin, env_str, nb_path, conn_id) 
       end
   end
   end  -- end if not(target_is_code)
-  end  -- end if cidx < 0
 end
 
 -- Poll for the target cell's result.
--- Returns None while still running, Some((output, blobs, err_opt, vars)) when done.
--- `blobs` is a list of (mime, base64_data) pairs extracted from blob sentinels.
+-- Returns None while still running, Some((output, blobs, err_opt)) when done.
+-- Variable extraction (Runner.extract_vars) is intentionally left to the
+-- caller in session.march — direct Runner.* calls from processes.march crash
+-- the interpreter (March compiler bug with cross-module fn dispatch).
 fn check_run_proc(run_through_idx, nb_path, conn_id) do
   let _ = run_through_idx  -- index not needed; the runtime tracks position
   let sid = session_id(nb_path, conn_id)
-  match Runtime.poll_result(sid) do
-    None -> None
-    Some((out, blobs, err_opt)) ->
-      -- Variable extraction: re-use the existing runner protocol if present,
-      -- otherwise return an empty list (vars will be added in a later pass).
-      let vars = Runner.extract_vars(out)
-      Some((out, blobs, err_opt, vars))
-  end
+  Runtime.poll_result(sid)
 end
 
 -- Poll for live/intermediate output of the currently running cell.
