@@ -101,49 +101,56 @@ end
 -- ── HTTP router ───────────────────────────────────────────────────────────────
 
 fn router(nb_path, display_title, port, march_bin, is_temp, conn) do
-  match (HttpServer.method(conn), HttpServer.path_info(conn)) do
-    (:get, Nil) ->
-      conn |> HttpServer.html(200, Page.ui_html(display_title, port, is_temp))
+  -- Workaround: match method and path separately to avoid an LLVM codegen bug
+  -- where mixing i64 (method atom) and ptr (path_info list) in a single tuple
+  -- destructure causes the optimizer to eliminate all route branches as unreachable.
+  if HttpServer.method(conn) == :get do
+    match HttpServer.path_info(conn) do
+      Nil ->
+        conn |> HttpServer.html(200, Page.ui_html(display_title, port, is_temp))
 
-    (:get, Cons("ws", Nil)) ->
-      -- Issue #3: reject WebSocket upgrades from origins other than localhost.
-      -- Without this check, any page loaded in the same browser can open a
-      -- cross-origin WebSocket to the notebook server and issue save/run
-      -- commands (CSRF via WebSocket).
-      -- We allow: absent Origin header (CLI clients, curl), localhost, 127.0.0.1.
-      let origin = match HttpServer.get_req_header(conn, "Origin") do
-        None -> "" | Some(o) -> o
-      end
-      let port_str = String.from_int(port)
-      let origin_ok =
-        String.is_empty(origin)                           ||
-        origin == "http://localhost:" ++ port_str         ||
-        origin == "http://127.0.0.1:" ++ port_str         ||
-        origin == "http://localhost"                       ||
-        origin == "http://127.0.0.1"
-      if not(origin_ok) do
-        conn |> HttpServer.text(403, "Forbidden: cross-origin WebSocket not allowed")
-      else
-        WebSocket.upgrade(conn, fn socket ->
-          let conn_id = next_conn_id()
-          Session.ws_loop(socket, nb_path, march_bin, conn_id)
-        )
-      end
+      Cons("ws", Nil) ->
+        -- Issue #3: reject WebSocket upgrades from origins other than localhost.
+        -- Without this check, any page loaded in the same browser can open a
+        -- cross-origin WebSocket to the notebook server and issue save/run
+        -- commands (CSRF via WebSocket).
+        -- We allow: absent Origin header (CLI clients, curl), localhost, 127.0.0.1.
+        let origin = match HttpServer.get_req_header(conn, "Origin") do
+          None -> "" | Some(o) -> o
+        end
+        let port_str = String.from_int(port)
+        let origin_ok =
+          String.is_empty(origin)                           ||
+          origin == "http://localhost:" ++ port_str         ||
+          origin == "http://127.0.0.1:" ++ port_str         ||
+          origin == "http://localhost"                       ||
+          origin == "http://127.0.0.1"
+        if not(origin_ok) do
+          conn |> HttpServer.text(403, "Forbidden: cross-origin WebSocket not allowed")
+        else
+          WebSocket.upgrade(conn, fn socket ->
+            let conn_id = next_conn_id()
+            Session.ws_loop(socket, nb_path, march_bin, conn_id)
+          )
+        end
 
-    (:get, Cons("assets", Cons("css", Cons("scroll.css", Nil)))) ->
-      serve_asset(conn, "css/scroll.css", "text/css; charset=utf-8")
+      Cons("assets", Cons("css", Cons("scroll.css", Nil))) ->
+        serve_asset(conn, "css/scroll.css", "text/css; charset=utf-8")
 
-    (:get, Cons("assets", Cons("js", Cons("scroll.js", Nil)))) ->
-      serve_asset(conn, "js/scroll.js", "application/javascript; charset=utf-8")
+      Cons("assets", Cons("js", Cons("scroll.js", Nil))) ->
+        serve_asset(conn, "js/scroll.js", "application/javascript; charset=utf-8")
 
-    (:get, Cons("assets", Cons("js", Cons("editor.js", Nil)))) ->
-      serve_asset(conn, "js/editor.js", "application/javascript; charset=utf-8")
+      Cons("assets", Cons("js", Cons("editor.js", Nil))) ->
+        serve_asset(conn, "js/editor.js", "application/javascript; charset=utf-8")
 
-    (:get, Cons("assets", Cons("js", Cons("purify.min.js", Nil)))) ->
-      serve_asset(conn, "js/purify.min.js", "application/javascript; charset=utf-8")
+      Cons("assets", Cons("js", Cons("purify.min.js", Nil))) ->
+        serve_asset(conn, "js/purify.min.js", "application/javascript; charset=utf-8")
 
-    _ ->
-      conn |> HttpServer.text(404, "Not Found")
+      _ ->
+        conn |> HttpServer.text(404, "Not Found")
+    end
+  else
+    conn |> HttpServer.text(404, "Not Found")
   end
 end
 

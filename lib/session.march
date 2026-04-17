@@ -167,7 +167,8 @@ mod Session do
               ",\"live\":" ++ json_str(live) ++ "}"
             ))
           end
-          Some((out, blobs, err_opt, vars)) -> do
+          Some((out, blobs, err_opt)) -> do
+            let vars = Runner.extract_vars(out)
             let add_results = Runner.process_forge_adds(out, nb_path)
             let clean_out = Runner.strip_forge_adds(out)
             WebSocket.send_frame(socket, TextFrame(output_msg(idx, clean_out, blobs, err_opt, vars)))
