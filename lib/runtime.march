@@ -39,6 +39,27 @@ import Shell
 
 pfn trim(s) do String.trim(s) end
 
+-- Strip REPL prompt prefixes ("march(N)> ") and unit return lines ("= ()").
+pfn strip_repl_noise(s) do
+  let lines = String.split(s, "\n")
+  let lines = List.map(lines, fn line ->
+    match String.split_first(line, "> ") do
+      Some((pre, rest)) ->
+        if String.starts_with(pre, "march(") do rest else line end
+      None -> line
+    end
+  )
+  let lines = List.filter(lines, fn line -> line != "= ()")
+  String.join(lines, "\n")
+end
+
+-- Drop [timing] lines from REPL stderr so they don't surface in cell output.
+pfn filter_timing(s) do
+  let lines = List.filter(String.split(s, "\n"),
+    fn l -> not(String.starts_with(l, "[timing]")))
+  trim(String.join(lines, "\n"))
+end
+
 pfn sh_quote(s) do Shell.sh_quote(s) end
 
 -- Vault namespace and key helpers.
@@ -362,9 +383,14 @@ fn poll_result(session_id) do
                   end
                   -- Strip blob sentinels from the raw output.
                   let (clean_out, blobs) = BlobParser.parse(out)
-                  -- Also surface any stderr that accumulated.
+                  -- Strip REPL noise: prompts like "march(2)> " and unit
+                  -- return values "= ()" that are never meaningful to users.
+                  let clean_out = strip_repl_noise(clean_out)
+                  -- Surface stderr, but drop [timing] lines — they appear in
+                  -- every REPL invocation and add no diagnostic value.
                   let errp = rt_err_path(session_id)
                   let err_raw = match File.read(errp) do Ok(s) -> trim(s) | Err(_) -> "" end
+                  let err_raw = filter_timing(err_raw)
                   let combined =
                     if String.is_empty(err_raw) do clean_out
                     else
