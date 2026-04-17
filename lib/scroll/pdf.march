@@ -1,0 +1,33 @@
+-- lib/scroll/pdf.march — Emit PDF blobs via the __SCROLL_BLOB__ sentinel protocol.
+--
+-- User code calls these helpers to embed PDFs in the notebook:
+--
+--   ScrollPdf.show(b64_data) -- embed a PDF document
+--
+-- The browser renders the blob as:
+--   <embed type="application/pdf" src="data:application/pdf;base64,<b64>">
+-- with a download link as fallback.
+
+mod ScrollPdf do
+
+doc "Build the raw sentinel string for a PDF blob (for testing / composing)."
+fn make_sentinel(b64 : String) : String do
+  "__SCROLL_BLOB__:application/pdf:" ++ b64 ++ "\n__SCROLL_BLOB_END__\n"
+end
+
+doc """
+Embed a PDF document in the notebook output.
+
+`b64` must be a valid base64-encoded PDF file.
+The browser renders it using `<embed>` with a download fallback.
+
+## Examples
+
+    march> ScrollPdf.show("JVBERi0x...")
+    ()
+"""
+fn show(b64 : String) : () do
+  print(make_sentinel(b64))
+end
+
+end

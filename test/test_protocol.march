@@ -1,0 +1,168 @@
+-- test/test_protocol.march
+-- Tests for lib/protocol.march (Protocol module).
+--
+-- Covers:
+--   output_msg/5 — serialize an output WS frame with optional blobs list.
+--   json_get_str/2 — JSON string field extraction.
+--
+-- NOTE on march test-runner RC bugs:
+--   1. `Option X == Y` is broken (all comparisons return false) — use `match`
+--      for any Option type assertion.
+--   2. `String.to_int` is broken in test mode — json_get_int is not tested
+--      here but works correctly at runtime.
+--   Both are in the same RC/Perceus bug class as the Gen.list issue in
+--   test_scroll.march and test_blob_parser.march.
+--
+-- Run with:  forge test test/test_protocol.march
+
+mod TestProtocol do
+
+-- ── Helper: unwrap Option(String) via match, fail if None ────────────────────
+
+pfn assert_str_eq(opt, expected) do
+  match opt do
+    None -> assert false
+    Some(s) -> assert (s == expected)
+  end
+end
+
+pfn assert_is_none_str(opt : Option(String)) do
+  match opt do
+    None -> assert true
+    Some(_) -> assert false
+  end
+end
+
+-- ── output_msg tests ──────────────────────────────────────────────────────────
+
+describe "Protocol.output_msg" do
+
+  test "message has type=output" do
+    let msg = Protocol.output_msg(3, "hello", [], None, [])
+    assert (String.contains(msg, "\"type\":\"output\""))
+  end
+
+  test "message has correct index in JSON" do
+    let msg = Protocol.output_msg(3, "hello", [], None, [])
+    assert (String.contains(msg, "\"index\":3"))
+  end
+
+  test "stdout text round-trips via json_get_str" do
+    let msg = Protocol.output_msg(0, "hello\nworld", [], None, [])
+    match Json.parse(msg) do
+      Err(_) -> assert false
+      Ok(jv) -> assert_str_eq(Protocol.json_get_str(jv, "stdout"), "hello\nworld")
+    end
+  end
+
+  test "error field is null when None" do
+    let msg = Protocol.output_msg(0, "", [], None, [])
+    assert (String.contains(msg, "\"error\":null"))
+  end
+
+  test "error field round-trips via json_get_str" do
+    let msg = Protocol.output_msg(0, "", [], Some("boom"), [])
+    match Json.parse(msg) do
+      Err(_) -> assert false
+      Ok(jv) -> assert_str_eq(Protocol.json_get_str(jv, "error"), "boom")
+    end
+  end
+
+  test "type field round-trips via json_get_str" do
+    let msg = Protocol.output_msg(0, "", [], None, [])
+    match Json.parse(msg) do
+      Err(_) -> assert false
+      Ok(jv) -> assert_str_eq(Protocol.json_get_str(jv, "type"), "output")
+    end
+  end
+
+  test "blobs array is empty when no blobs given" do
+    let msg = Protocol.output_msg(0, "out", [], None, [])
+    assert (String.contains(msg, "\"blobs\":[]"))
+  end
+
+  test "blobs array contains one blob with correct mime and data" do
+    let blobs = [("image/png", "aGVsbG8=")]
+    let msg = Protocol.output_msg(0, "", blobs, None, [])
+    assert (String.contains(msg, "\"mime\":\"image/png\""))
+    assert (String.contains(msg, "\"data\":\"aGVsbG8=\""))
+  end
+
+  test "blobs array contains multiple blobs in order" do
+    let blobs = [("image/png", "cG5n"), ("audio/wav", "d2F2")]
+    let msg = Protocol.output_msg(0, "", blobs, None, [])
+    assert (String.contains(msg, "\"image/png\""))
+    assert (String.contains(msg, "\"audio/wav\""))
+    -- png must appear before wav in the serialized JSON
+    match String.split_first(msg, "image/png") do
+      None -> assert false
+      Some((before_png, _)) ->
+        match String.split_first(msg, "audio/wav") do
+          None -> assert false
+          Some((before_wav, _)) ->
+            assert (String.byte_size(before_png) < String.byte_size(before_wav))
+        end
+    end
+  end
+
+  test "message with blobs is valid JSON" do
+    let blobs = [("image/png", "abc123"), ("audio/wav", "xyz789")]
+    let msg = Protocol.output_msg(1, "stdout text\n", blobs, Some("err"), [("x", "42")])
+    assert (match Json.parse(msg) do Ok(_) -> true | Err(_) -> false end)
+  end
+
+  test "base64 data with padding chars is JSON-safe" do
+    let blobs = [("text/plain", "SGVsbG8gV29ybGQ=")]
+    let msg = Protocol.output_msg(0, "", blobs, None, [])
+    assert (match Json.parse(msg) do Ok(_) -> true | Err(_) -> false end)
+  end
+
+  test "empty message is valid JSON" do
+    let msg = Protocol.output_msg(0, "", [], None, [])
+    assert (match Json.parse(msg) do Ok(_) -> true | Err(_) -> false end)
+  end
+
+end
+
+-- ── json_get_str tests ────────────────────────────────────────────────────────
+
+describe "Protocol.json_get_str" do
+
+  test "extracts a present string field" do
+    match Json.parse("{\"key\":\"value\"}") do
+      Err(_) -> assert false
+      Ok(jv) -> assert_str_eq(Protocol.json_get_str(jv, "key"), "value")
+    end
+  end
+
+  test "returns None for missing field" do
+    match Json.parse("{\"other\":\"x\"}") do
+      Err(_) -> assert false
+      Ok(jv) -> assert_is_none_str(Protocol.json_get_str(jv, "key"))
+    end
+  end
+
+  test "returns None for a non-string field" do
+    match Json.parse("{\"n\":42}") do
+      Err(_) -> assert false
+      Ok(jv) -> assert_is_none_str(Protocol.json_get_str(jv, "n"))
+    end
+  end
+
+  test "unescapes \\n in string values" do
+    match Json.parse("{\"s\":\"a\\nb\"}") do
+      Err(_) -> assert false
+      Ok(jv) -> assert_str_eq(Protocol.json_get_str(jv, "s"), "a\nb")
+    end
+  end
+
+  test "handles empty string value" do
+    match Json.parse("{\"k\":\"\"}") do
+      Err(_) -> assert false
+      Ok(jv) -> assert_str_eq(Protocol.json_get_str(jv, "k"), "")
+    end
+  end
+
+end
+
+end

@@ -1,0 +1,159 @@
+-- test/test_scroll_image.march
+-- Tests for lib/scroll/image.march, audio.march, video.march, pdf.march.
+--
+-- These modules emit __SCROLL_BLOB__ sentinels to stdout when called from a
+-- cell.  Direct stdout capture is not available in march tests, so we:
+--   1. Test `make_sentinel/2` (an exported fn) for correct sentinel format.
+--   2. Round-trip through BlobParser.parse to verify the sentinel is parseable.
+--
+-- The show/png/jpeg/etc functions are thin wrappers over print(make_sentinel(...))
+-- and are not tested here (they produce stdout side effects not capturable in tests).
+--
+-- Run with:  forge test test/test_scroll_image.march
+
+mod TestScrollImage do
+
+-- ── Helper ────────────────────────────────────────────────────────────────────
+
+pfn expected_sentinel(mime, b64) do
+  "__SCROLL_BLOB__:" ++ mime ++ ":" ++ b64 ++ "\n__SCROLL_BLOB_END__\n"
+end
+
+-- ── ScrollImage tests ─────────────────────────────────────────────────────────
+
+describe "ScrollImage.make_sentinel" do
+
+  test "PNG sentinel has correct format" do
+    assert (ScrollImage.make_sentinel("image/png", "aGVsbG8=") == expected_sentinel("image/png", "aGVsbG8="))
+  end
+
+  test "JPEG sentinel has correct format" do
+    assert (ScrollImage.make_sentinel("image/jpeg", "anBnZWc=") == expected_sentinel("image/jpeg", "anBnZWc="))
+  end
+
+  test "SVG sentinel has correct format" do
+    assert (ScrollImage.make_sentinel("image/svg+xml", "dGVzdA==") == expected_sentinel("image/svg+xml", "dGVzdA=="))
+  end
+
+  test "sentinel starts with __SCROLL_BLOB__ prefix" do
+    let s = ScrollImage.make_sentinel("image/png", "aGVsbG8=")
+    assert (String.starts_with(s, "__SCROLL_BLOB__:"))
+  end
+
+  test "sentinel ends with __SCROLL_BLOB_END__ line" do
+    let s = ScrollImage.make_sentinel("image/png", "aGVsbG8=")
+    assert (String.ends_with(s, "__SCROLL_BLOB_END__\n"))
+  end
+
+  test "sentinel round-trips through BlobParser.parse as image/png" do
+    let b64 = "aGVsbG8="
+    let sentinel = ScrollImage.make_sentinel("image/png", b64)
+    let (text, blobs) = BlobParser.parse(sentinel)
+    assert (String.is_empty(String.trim(text)))
+    assert (List.length(blobs) == 1)
+    match blobs do
+      Cons((mime, data), Nil) ->
+        assert (mime == "image/png")
+        assert (data == b64)
+      _ -> assert false
+    end
+  end
+
+  test "sentinel round-trips through BlobParser.parse as image/svg+xml" do
+    let b64 = "PHN2Zy8+"
+    let sentinel = ScrollImage.make_sentinel("image/svg+xml", b64)
+    let (_, blobs) = BlobParser.parse(sentinel)
+    assert (List.length(blobs) == 1)
+    match blobs do
+      Cons((mime, _), Nil) -> assert (mime == "image/svg+xml")
+      _ -> assert false
+    end
+  end
+
+end
+
+-- ── ScrollAudio tests ─────────────────────────────────────────────────────────
+
+describe "ScrollAudio.make_sentinel" do
+
+  test "WAV sentinel has correct format" do
+    assert (ScrollAudio.make_sentinel("audio/wav", "d2F2ZQ==") == expected_sentinel("audio/wav", "d2F2ZQ=="))
+  end
+
+  test "MPEG sentinel has correct format" do
+    assert (ScrollAudio.make_sentinel("audio/mpeg", "bXAz") == expected_sentinel("audio/mpeg", "bXAz"))
+  end
+
+  test "sentinel round-trips through BlobParser as audio/wav" do
+    let sentinel = ScrollAudio.make_sentinel("audio/wav", "d2F2ZQ==")
+    let (_, blobs) = BlobParser.parse(sentinel)
+    assert (List.length(blobs) == 1)
+    match blobs do
+      Cons((mime, _), Nil) -> assert (mime == "audio/wav")
+      _ -> assert false
+    end
+  end
+
+  test "sentinel round-trips through BlobParser as audio/mpeg" do
+    let sentinel = ScrollAudio.make_sentinel("audio/mpeg", "bXAz")
+    let (_, blobs) = BlobParser.parse(sentinel)
+    assert (List.length(blobs) == 1)
+    match blobs do
+      Cons((mime, _), Nil) -> assert (mime == "audio/mpeg")
+      _ -> assert false
+    end
+  end
+
+end
+
+-- ── ScrollVideo tests ─────────────────────────────────────────────────────────
+
+describe "ScrollVideo.make_sentinel" do
+
+  test "MP4 sentinel has correct format" do
+    assert (ScrollVideo.make_sentinel("video/mp4", "bXA0") == expected_sentinel("video/mp4", "bXA0"))
+  end
+
+  test "WebM sentinel has correct format" do
+    assert (ScrollVideo.make_sentinel("video/webm", "d2VibQ==") == expected_sentinel("video/webm", "d2VibQ=="))
+  end
+
+  test "sentinel round-trips through BlobParser as video/mp4" do
+    let sentinel = ScrollVideo.make_sentinel("video/mp4", "bXA0")
+    let (_, blobs) = BlobParser.parse(sentinel)
+    assert (List.length(blobs) == 1)
+    match blobs do
+      Cons((mime, _), Nil) -> assert (mime == "video/mp4")
+      _ -> assert false
+    end
+  end
+
+end
+
+-- ── ScrollPdf tests ───────────────────────────────────────────────────────────
+
+describe "ScrollPdf.make_sentinel" do
+
+  test "PDF sentinel has correct MIME type" do
+    let s = ScrollPdf.make_sentinel("cGRm")
+    assert (s == expected_sentinel("application/pdf", "cGRm"))
+  end
+
+  test "PDF sentinel starts with __SCROLL_BLOB__:application/pdf:" do
+    let s = ScrollPdf.make_sentinel("cGRm")
+    assert (String.starts_with(s, "__SCROLL_BLOB__:application/pdf:"))
+  end
+
+  test "sentinel round-trips through BlobParser as application/pdf" do
+    let sentinel = ScrollPdf.make_sentinel("cGRm")
+    let (_, blobs) = BlobParser.parse(sentinel)
+    assert (List.length(blobs) == 1)
+    match blobs do
+      Cons((mime, _), Nil) -> assert (mime == "application/pdf")
+      _ -> assert false
+    end
+  end
+
+end
+
+end

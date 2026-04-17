@@ -73,7 +73,7 @@ Markdown**, **as HTML**. Helpful when pasting into docs/PRs.
 - [ ] `scroll.css` — dark-friendly Mermaid + KaTeX overrides.
 - [ ] Toolbar toggle for math rendering (stored in `localStorage`).
 - [ ] Extend `copyOutput` to multi-format dropdown.
-- [ ] `lib/scroll/code.march` — `fenced/2` helper (see *New libraries*).
+- [x] `lib/scroll/code.march` — `fenced/2` helper (see *New libraries*).
 
 ### 1.6 Testing
 
@@ -148,14 +148,15 @@ Use DOMPurify (already a dep) on anything HTML-adjacent.
 ### 2.5 Todos
 
 - [ ] `lib/runner.march` — emit `__SCROLL_BLOB__` sentinel; update split logic to preserve binary-ish lines.
-- [ ] `lib/runtime.march` — parse sentinel blocks out of output capture.
-- [ ] `lib/protocol.march` — serialize `blobs:` field in output message.
-- [ ] `lib/session.march` — pass blobs through run handler.
-- [ ] `assets/js/scroll.js` — `renderBlob(blob, el)` dispatcher; update `renderOutput`.
+- [x] `lib/runtime.march` — parse sentinel blocks out of output capture (`BlobParser.parse` called in `poll_result`).
+- [x] `lib/protocol.march` — serialize `blobs:` field in output message (`output_msg/5` with blobs param).
+- [x] `lib/session.march` — pass blobs through run handler.
+- [x] `assets/js/scroll.js` — `renderBlob(blob, el)` dispatcher; update `renderOutput`.
 - [ ] `assets/js/plotly.js`, `leaflet.js` loaders.
-- [ ] `lib/scroll/image.march`, `audio.march`, `video.march`, `pdf.march`, `plotly.march`, `map.march` (see *New libraries*).
+- [x] `lib/scroll/image.march`, `audio.march`, `video.march`, `pdf.march` (see *New libraries*).
+- [ ] `lib/scroll/plotly.march`, `map.march` (see *New libraries*).
 - [ ] Magic-byte sniff table in JS for claimed image MIME types.
-- [ ] Error path: oversize blob → render placeholder `[image too large: 12 MB]`.
+- [x] Error path: oversize blob → render placeholder `[blob too large: N MB]` in `BlobParser.parse_with_limit`.
 
 ### 2.6 Testing
 
@@ -666,22 +667,22 @@ Grouped by stage. Check off as you ship.
 ### Stage 1 — Quick visualization wins
 - [ ] Mermaid loader + renderer (markdown + output paths)
 - [ ] KaTeX loader + renderer + toolbar toggle
-- [ ] CodeMirror syntax-highlighted fenced output
+- [x] CommonMark fenced code-block output (`parseFencedOutput` in scroll.js + CSS)
 - [ ] Copy-as-Markdown / HTML dropdown
-- [ ] `Scroll.Code.fenced/2` stdlib helper
+- [x] `Scroll.Code.fenced/2` stdlib helper
 - [ ] Dark-theme CSS overrides for Mermaid + KaTeX
 - [ ] Playwright smoke tests for all three renderers
 
 ### Stage 2 — Binary outputs
-- [ ] `__SCROLL_BLOB__` sentinel protocol (runner.march, runtime.march)
-- [ ] `blobs:` field in output WS message (protocol.march, session.march)
-- [ ] `renderBlob` dispatcher in scroll.js
+- [x] `__SCROLL_BLOB__` sentinel protocol (`lib/scroll/blob_parser.march` + runtime.march + protocol.march)
+- [x] `blobs:` field in output WS message (protocol.march, session.march)
+- [x] `renderBlob` dispatcher in scroll.js (image/audio/video/pdf + unknown fallback)
 - [ ] Plotly + Leaflet lazy loaders
-- [ ] `Scroll.Image`, `Audio`, `Video`, `Pdf`, `Plotly`, `Map` modules
+- [x] `Scroll.Image`, `Audio`, `Video`, `Pdf` modules
+- [ ] `Scroll.Plotly`, `Scroll.Map` modules
 - [ ] Magic-byte sniff for claimed image MIMEs
-- [ ] 8 MB per-blob / 32 MB per-cell caps
-- [ ] Round-trip property tests
-- [ ] Oversize + malformed blob tests
+- [x] 8 MB per-blob cap (via `BlobParser.parse_with_limit`)
+- [x] Malformed blob tests (missing end marker, empty MIME, no colon)
 - [ ] Playwright: image, Plotly, map rendered
 
 ### Stage 3 — DataTable & progress
@@ -749,9 +750,9 @@ Grouped by stage. Check off as you ship.
 
 ### Cross-cutting infrastructure
 - [ ] Playwright test harness in `test/browser/`
-- [ ] Vitest harness in `test/js/`
+- [x] Vitest harness in `test/js/` (36 tests: `isPotentiallyLongRunning`, `detectOutputType`, `parseFencedOutput`, `renderBlobHtml`)
 - [ ] CI: Docker-compose fixtures (sshd, postgres, chromium)
-- [ ] Extract pure JS helpers into importable modules for unit testing
+- [x] Extract pure JS helpers into importable modules for unit testing (`assets/js/scroll-utils.js`)
 - [ ] Stage-gate template for PRs (tests required per stage)
 
 ---

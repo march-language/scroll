@@ -1,0 +1,96 @@
+-- ScrollCode module — helpers for producing fenced code-block output.
+--
+-- Cells that want their stdout to be rendered with syntax highlighting can
+-- emit a CommonMark-style fenced code block tagged with a language.  The
+-- notebook frontend (Stage 1.3 of specs/parity-plan.md) dispatches on the
+-- opening fence and hands the body to the CodeMirror highlighter.
+--
+-- Design:
+--   - fenced/2 is the only public function.  It builds a markdown fence
+--     whose length adapts to the body so pathological inputs (bodies that
+--     contain backtick runs of their own) still round-trip.
+--   - Private helpers (rtrim_newlines, longest_backtick_run, make_fence,
+--     repeat_char) are pfn so tests and internal callers can access them
+--     without enlarging the public surface.
+
+mod ScrollCode do
+
+-- ── fenced/2 ──────────────────────────────────────────────────────────────────
+
+doc """
+Build a CommonMark fenced code block containing `value`, tagged with `lang`.
+
+The fence length adapts so the block survives bodies containing backtick
+runs: if the body contains a line of 3 backticks, the fence grows to 4;
+4 → 5; and so on.  Trailing newlines on `value` are trimmed so the closing
+fence sits on its own line without an extra blank line above it.
+
+## Examples
+
+    march> ScrollCode.fenced("json", "{}")
+    "```json\n{}\n```"
+    march> ScrollCode.fenced("text", "")
+    "```text\n```"
+    march> ScrollCode.fenced("", "hi")
+    "```\nhi\n```"
+    march> ScrollCode.fenced("md", "```")
+    "````md\n```\n````"
+"""
+fn fenced(lang : String, value : String) : String do
+  let body   = rtrim_newlines(value)
+  let fence  = make_fence(longest_backtick_run(body, "`", 1))
+  let opener = fence ++ lang
+  if String.is_empty(body) do
+    opener ++ "\n" ++ fence
+  else
+    opener ++ "\n" ++ body ++ "\n" ++ fence
+  end
+end
+
+-- ── Helpers ───────────────────────────────────────────────────────────────────
+
+-- Strip a trailing run of "\n" characters, leaving other whitespace intact.
+-- Used so callers that pass values with a trailing newline don't produce
+-- markdown with a blank line before the closing fence.
+pfn rtrim_newlines(s) do
+  if String.ends_with(s, "\n") do
+    rtrim_newlines(String.slice(s, 0, String.byte_size(s) - 1))
+  else
+    s
+  end
+end
+
+-- Longest run of consecutive backticks found anywhere in `s`.  Implemented
+-- as a probing search: test whether `s` contains N backticks in a row,
+-- starting at 1 and increasing until the probe no longer fits.  The probe
+-- is carried through the recursion so we don't re-allocate it from scratch
+-- each step.  Returns 0 if `s` contains no backticks at all.
+pfn longest_backtick_run(s : String, probe : String, n : Int) : Int do
+  if String.contains(s, probe) do
+    longest_backtick_run(s, probe ++ "`", n + 1)
+  else
+    n - 1
+  end
+end
+
+-- Build a fence of length max(3, run + 1).  CommonMark requires at least
+-- 3 backticks; to safely contain a body that itself has a run of N
+-- backticks, we need N+1.
+pfn make_fence(max_run : Int) : String do
+  let need = if max_run + 1 > 3 do max_run + 1 else 3 end
+  repeat_char("`", need)
+end
+
+-- Repeat a single character `c` `n` times.  Tail-recursive via an
+-- accumulator so it stays O(n) even for long fences.
+pfn repeat_char(c : String, n : Int) : String do
+  repeat_char_acc(c, n, "")
+end
+
+pfn repeat_char_acc(c : String, n : Int, acc : String) : String do
+  if n <= 0 do acc
+  else repeat_char_acc(c, n - 1, acc ++ c)
+  end
+end
+
+end

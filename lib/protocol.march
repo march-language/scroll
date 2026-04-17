@@ -1,7 +1,7 @@
 -- protocol.march — JSON building and parsing helpers for the notebook wire protocol.
 --
 -- Building (fn):
---   output_msg/4    : {"type":"output", ...}
+--   output_msg/5    : {"type":"output", ...} — includes optional blobs array
 --   notebook_msg/2  : {"type":"notebook", ...}
 --
 -- Parsing (fn):
@@ -11,6 +11,7 @@
 -- Internal helpers (pfn/fn):
 --   json_opt_str/1  : "null" or json_str(s)
 --   vars_to_json/1  : (name, value) list → JSON object string
+--   blobs_to_json/1 : List((mime, b64)) → JSON array string
 --   cells_to_json/1 : List(Cell) → JSON array string
 --   unescape_json/1 : single-pass JSON string unescape
 
@@ -37,9 +38,35 @@ pfn vars_to_json(vars) do
   "{" ++ String.join(pairs, ",") ++ "}"
 end
 
-fn output_msg(idx, stdout_text, error_opt, vars) do
+-- Serialize a single blob as a JSON object: {"mime":"...","data":"..."}.
+fn blob_to_json_obj(blob) do
+  let (mime, b64) = blob
+  "{\"mime\":" ++ json_str(mime) ++ ",\"data\":" ++ json_str(b64) ++ "}"
+end
+
+pfn blobs_to_json(blobs) do
+  "[" ++ String.join(List.map(blobs, blob_to_json_obj), ",") ++ "]"
+end
+
+doc """
+Build an output WebSocket frame for cell `idx`.
+
+- `stdout_text` : clean cell stdout (blob sentinels already stripped).
+- `blobs`       : list of `(mime, base64_data)` pairs extracted from sentinels.
+- `error_opt`   : `Some(msg)` for runtime errors, `None` otherwise.
+- `vars`        : `(name, value)` pairs from variable extraction.
+
+## Examples
+
+    march> String.contains(Protocol.output_msg(0, "hi", [], None, []), "\"type\":\"output\"")
+    true
+    march> String.contains(Protocol.output_msg(0, "", [], None, []), "\"blobs\":[]")
+    true
+"""
+fn output_msg(idx, stdout_text, blobs, error_opt, vars) do
   "{\"type\":\"output\",\"index\":" ++ String.from_int(idx) ++
   ",\"stdout\":" ++ json_str(stdout_text) ++
+  ",\"blobs\":" ++ blobs_to_json(blobs) ++
   ",\"error\":" ++ json_opt_str(error_opt) ++
   ",\"vars\":" ++ vars_to_json(vars) ++ "}"
 end
