@@ -19,8 +19,6 @@ mod Processes do
 
 import Cells
 
-pfn trim(s) do String.trim(s) end
-
 -- Session ID: combines the notebook path and the per-WebSocket connection ID
 -- so each browser tab gets its own isolated REPL process.
 pfn session_id(nb_path, conn_id) do nb_path ++ ":" ++ conn_id end
@@ -59,18 +57,18 @@ fn start_run_proc(cells, run_through_idx, march_bin, env_str, nb_path, conn_id) 
 end
 
 -- Poll for the target cell's result.
--- Returns None while still running, Some((output, err_opt, vars)) when done.
+-- Returns None while still running, Some((output, blobs, err_opt, vars)) when done.
+-- `blobs` is a list of (mime, base64_data) pairs extracted from blob sentinels.
 fn check_run_proc(run_through_idx, nb_path, conn_id) do
   let _ = run_through_idx  -- index not needed; the runtime tracks position
   let sid = session_id(nb_path, conn_id)
   match Runtime.poll_result(sid) do
     None -> None
-    Some((out, err_opt)) ->
+    Some((out, blobs, err_opt)) ->
       -- Variable extraction: re-use the existing runner protocol if present,
       -- otherwise return an empty list (vars will be added in a later pass).
       let vars = Runner.extract_vars(out)
-      let clean_out = out
-      Some((clean_out, err_opt, vars))
+      Some((out, blobs, err_opt, vars))
   end
 end
 

@@ -31,7 +31,7 @@ fn extract_vars(stdout)                 do Runner.extract_vars(stdout) end
 fn extract_forge_adds(stdout)           do Runner.extract_forge_adds(stdout) end
 fn strip_forge_adds(output)             do Runner.strip_forge_adds(output) end
 fn find_code_idx(cells, target)         do Runner.find_code_idx(cells, target, 0, 0) end
-fn output_msg(idx, out, err_opt, vars)  do Protocol.output_msg(idx, out, err_opt, vars) end
+fn output_msg(idx, out, blobs, err_opt, vars)  do Protocol.output_msg(idx, out, blobs, err_opt, vars) end
 fn notebook_msg(content, cells)         do Protocol.notebook_msg(content, cells) end
 fn json_get_str(jv, key)                do Protocol.json_get_str(jv, key) end
 fn json_get_int(jv, key)                do Protocol.json_get_int(jv, key) end

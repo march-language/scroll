@@ -682,33 +682,33 @@ end
 describe "output_msg" do
 
   test "contains type and index" do
-    let msg = Scroll.output_msg(3, "hi", None, Nil)
+    let msg = Scroll.output_msg(3, "hi", Nil, None, Nil)
     assert (String.contains(msg, "\"type\":\"output\""))
     assert (String.contains(msg, "\"index\":3"))
   end
 
   test "encodes stdout field" do
-    let msg = Scroll.output_msg(0, "hello", None, Nil)
+    let msg = Scroll.output_msg(0, "hello", Nil, None, Nil)
     assert (String.contains(msg, "\"stdout\":\"hello\""))
   end
 
   test "error None encodes as null" do
-    let msg = Scroll.output_msg(0, "", None, Nil)
+    let msg = Scroll.output_msg(0, "", Nil, None, Nil)
     assert (String.contains(msg, "\"error\":null"))
   end
 
   test "error Some encodes as string" do
-    let msg = Scroll.output_msg(0, "", Some("boom"), Nil)
+    let msg = Scroll.output_msg(0, "", Nil, Some("boom"), Nil)
     assert (String.contains(msg, "\"error\":\"boom\""))
   end
 
   test "escapes quotes in stdout" do
-    let msg = Scroll.output_msg(0, "say \"hi\"", None, Nil)
+    let msg = Scroll.output_msg(0, "say \"hi\"", Nil, None, Nil)
     assert (String.contains(msg, "\\\"hi\\\""))
   end
 
   test "includes vars object" do
-    let msg = Scroll.output_msg(0, "", None, Cons(("x", "42"), Nil))
+    let msg = Scroll.output_msg(0, "", Nil, None, Cons(("x", "42"), Nil))
     assert (String.contains(msg, "\"x\":\"42\""))
   end
 
@@ -975,7 +975,7 @@ describe "start_run_proc + check_run_proc" do
             Scroll.stop_run_proc(nb, conn)
             assert false
           end
-          Some((stdout, err_opt, _vars)) -> do
+          Some((stdout, _blobs, err_opt, _vars)) -> do
             Scroll.stop_run_proc(nb, conn)
             assert (err_opt == None)
             assert (String.contains(stdout, "42"))
@@ -997,7 +997,7 @@ describe "start_run_proc + check_run_proc" do
             Scroll.stop_run_proc(nb, conn)
             assert false
           end
-          Some((_stdout, err_opt, _vars)) -> do
+          Some((_stdout, _blobs, err_opt, _vars)) -> do
             Scroll.stop_run_proc(nb, conn)
             match err_opt do
               -- In REPL mode, syntax errors appear in output rather than err_opt;
@@ -1302,7 +1302,7 @@ describe "property: message builders produce valid JSON" do
     -- Gen.int upper bound must be <= ~1000 to avoid a march runtime crash
     -- with large integer shrink trees (known march bug).
     Check.all(Gen.int(0, 100), fn idx ->
-      match Json.parse(Scroll.output_msg(idx, "test output", None, Nil)) do
+      match Json.parse(Scroll.output_msg(idx, "test output", Nil, None, Nil)) do
         Ok(_) -> true
         Err(_) -> false
       end
@@ -1311,7 +1311,7 @@ describe "property: message builders produce valid JSON" do
 
   test "output_msg with an error string is parseable JSON" do
     Check.all(Gen.int(0, 100), fn idx ->
-      match Json.parse(Scroll.output_msg(idx, "", Some("runtime error"), Nil)) do
+      match Json.parse(Scroll.output_msg(idx, "", Nil, Some("runtime error"), Nil)) do
         Ok(_) -> true
         Err(_) -> false
       end

@@ -1,0 +1,229 @@
+-- test/test_blob_parser.march
+-- Tests for lib/scroll/blob_parser.march (BlobParser module).
+--
+-- Covers:
+--   parse/1 — extract __SCROLL_BLOB__ sentinel blocks from raw cell stdout.
+--             Returns (clean_text, blobs) where blobs is a list of
+--             (mime, base64_data) pairs.
+--
+-- Sentinel format (Stage 2.1 of specs/parity-plan.md):
+--   __SCROLL_BLOB__:<mime>:<base64>\n
+--   __SCROLL_BLOB_END__\n
+--
+-- Run with:  forge test test/test_blob_parser.march
+
+mod TestBlobParser do
+
+-- ── Helpers ───────────────────────────────────────────────────────────────────
+
+-- Build a well-formed __SCROLL_BLOB__ sentinel string.
+pfn make_blob_sentinel(mime, b64) do
+  "__SCROLL_BLOB__:" ++ mime ++ ":" ++ b64 ++ "\n__SCROLL_BLOB_END__\n"
+end
+
+-- Workaround: The march binary has an RC bug where `match` on an Option type
+-- inside a `Check.all` lambda crashes for the empty-list counterexample.
+-- We extract these predicates to pfn helpers outside the lambda so the match
+-- executes in a normal stack frame rather than the property runner's.
+pfn header_is_none(s : String) : Bool do
+  match BlobParser.parse_header(s) do
+    None    -> true
+    Some(_) -> false
+  end
+end
+
+pfn header_is_some(s : String) : Bool do
+  match BlobParser.parse_header(s) do
+    None    -> false
+    Some(_) -> true
+  end
+end
+
+-- ── Unit tests: happy paths ──────────────────────────────────────────────────
+
+describe "BlobParser.parse" do
+
+  test "plain text with no blobs passes through unchanged" do
+    let (text, blobs) = BlobParser.parse("hello world\n")
+    assert (text == "hello world\n")
+    assert (List.length(blobs) == 0)
+  end
+
+  test "empty input yields empty text and no blobs" do
+    let (text, blobs) = BlobParser.parse("")
+    assert (text == "")
+    assert (List.length(blobs) == 0)
+  end
+
+  test "single blob is extracted and text is empty" do
+    let raw = make_blob_sentinel("image/png", "aGVsbG8=")
+    let (text, blobs) = BlobParser.parse(raw)
+    assert (String.is_empty(String.trim(text)))
+    assert (List.length(blobs) == 1)
+    match blobs do
+      Cons((mime, data), Nil) ->
+        assert (mime == "image/png")
+        assert (data == "aGVsbG8=")
+      _ -> assert false
+    end
+  end
+
+  test "text before blob is preserved" do
+    let raw = "some output\n" ++ make_blob_sentinel("image/png", "aGVsbG8=")
+    let (text, blobs) = BlobParser.parse(raw)
+    assert (String.starts_with(text, "some output\n"))
+    assert (List.length(blobs) == 1)
+  end
+
+  test "text after blob is preserved" do
+    let raw = make_blob_sentinel("image/png", "aGVsbG8=") ++ "after text\n"
+    let (text, blobs) = BlobParser.parse(raw)
+    assert (String.contains(text, "after text\n"))
+    assert (List.length(blobs) == 1)
+  end
+
+  test "text before and after blob is both preserved" do
+    let raw = "before\n" ++ make_blob_sentinel("audio/wav", "d2F2ZQ==") ++ "after\n"
+    let (text, blobs) = BlobParser.parse(raw)
+    assert (String.contains(text, "before\n"))
+    assert (String.contains(text, "after\n"))
+    assert (List.length(blobs) == 1)
+  end
+
+  test "multiple blobs are all extracted in order" do
+    let raw =
+      make_blob_sentinel("image/png", "cG5n") ++
+      make_blob_sentinel("image/jpeg", "anBnZWc=") ++
+      make_blob_sentinel("audio/wav", "d2F2")
+    let (text, blobs) = BlobParser.parse(raw)
+    assert (List.length(blobs) == 3)
+    match blobs do
+      Cons((m1, _), Cons((m2, _), Cons((m3, _), Nil))) ->
+        assert (m1 == "image/png")
+        assert (m2 == "image/jpeg")
+        assert (m3 == "audio/wav")
+      _ -> assert false
+    end
+  end
+
+  test "interleaved text and blobs: text pieces are all preserved" do
+    let raw =
+      "line1\n" ++
+      make_blob_sentinel("image/png", "dGVzdA==") ++
+      "line2\n" ++
+      make_blob_sentinel("audio/wav", "YXVkaW8=") ++
+      "line3\n"
+    let (text, blobs) = BlobParser.parse(raw)
+    assert (String.contains(text, "line1\n"))
+    assert (String.contains(text, "line2\n"))
+    assert (String.contains(text, "line3\n"))
+    assert (List.length(blobs) == 2)
+  end
+
+  test "base64 containing = padding characters parses correctly" do
+    let b64 = "SGVsbG8gV29ybGQ="   -- "Hello World" in base64
+    let raw = make_blob_sentinel("text/plain", b64)
+    let (_, blobs) = BlobParser.parse(raw)
+    match blobs do
+      Cons((_, data), Nil) -> assert (data == b64)
+      _ -> assert false
+    end
+  end
+
+  test "base64 containing + and / characters parses correctly" do
+    let b64 = "YWJj/def+ghij=="   -- synthetic base64 with + and /
+    let raw = make_blob_sentinel("application/octet-stream", b64)
+    let (_, blobs) = BlobParser.parse(raw)
+    match blobs do
+      Cons((_, data), Nil) -> assert (data == b64)
+      _ -> assert false
+    end
+  end
+
+  test "blob mime type is preserved exactly" do
+    let raw = make_blob_sentinel("application/json+plotly", "e30=")
+    let (_, blobs) = BlobParser.parse(raw)
+    match blobs do
+      Cons((mime, _), Nil) -> assert (mime == "application/json+plotly")
+      _ -> assert false
+    end
+  end
+
+end
+
+-- ── Unit tests: error / edge cases ───────────────────────────────────────────
+
+describe "BlobParser.parse error paths" do
+
+  test "missing __SCROLL_BLOB_END__ treats the whole line as text" do
+    let raw = "__SCROLL_BLOB__:image/png:aGVsbG8=\n"
+    let (text, blobs) = BlobParser.parse(raw)
+    -- No end marker → the sentinel start itself becomes part of the text
+    assert (List.length(blobs) == 0)
+    assert (String.contains(text, "__SCROLL_BLOB__:image/png:aGVsbG8="))
+  end
+
+  test "blob header with no colon separator is treated as text" do
+    -- Header after __SCROLL_BLOB__: has no colon → mime is empty → skip
+    let raw = "__SCROLL_BLOB__:invaliddataonly\n__SCROLL_BLOB_END__\n"
+    let (text, blobs) = BlobParser.parse(raw)
+    assert (List.length(blobs) == 0)
+  end
+
+  test "empty mime type is rejected" do
+    let raw = "__SCROLL_BLOB__::base64data\n__SCROLL_BLOB_END__\n"
+    let (text, blobs) = BlobParser.parse(raw)
+    assert (List.length(blobs) == 0)
+  end
+
+  test "oversize blob is replaced with an error placeholder" do
+    -- We use BlobParser.parse_with_limit/2 with a small custom cap (10 chars).
+    -- Build a sentinel whose base64 payload is 11 chars (just over the cap).
+    let raw = "__SCROLL_BLOB__:image/png:AAAAAAAAAAA\n__SCROLL_BLOB_END__\n"
+    let (text, blobs) = BlobParser.parse_with_limit(raw, 10)
+    assert (List.length(blobs) == 0)
+    assert (String.contains(text, "[blob too large"))
+  end
+
+end
+
+-- ── Property tests ───────────────────────────────────────────────────────────
+
+-- Unit tests for parse_header (replaces Check.all property tests; the march
+-- binary has an RC bug that crashes Gen.list-based properties for empty-list
+-- inputs — see known issue in test_scroll.march).
+describe "BlobParser.parse_header" do
+
+  test "string with no colon returns None" do
+    assert (header_is_none(""))
+    assert (header_is_none("abc"))
+    assert (header_is_none("imagepngdata"))
+  end
+
+  test "string with a colon and non-empty left side returns Some" do
+    assert (header_is_some("image/png:aGVsbG8="))
+    assert (header_is_some("mime:"))
+    assert (header_is_some("a:b"))
+  end
+
+  test "first colon splits mime from data correctly" do
+    match BlobParser.parse_header("image/png:abc:def") do
+      Some((mime, data)) ->
+        assert (mime == "image/png")
+        assert (data == "abc:def")
+      None -> assert false
+    end
+  end
+
+  test "empty mime (leading colon) returns None" do
+    assert (header_is_none(":base64data"))
+  end
+
+  test "max_blob_b64_bytes is a positive integer" do
+    let n = BlobParser.max_blob_b64_bytes()
+    assert (n > 0)
+  end
+
+end
+
+end

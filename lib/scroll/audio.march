@@ -1,0 +1,43 @@
+-- lib/scroll/audio.march — Emit audio blobs via the __SCROLL_BLOB__ sentinel protocol.
+--
+-- User code calls these helpers to play audio in the notebook:
+--
+--   ScrollAudio.wav(b64_data)  -- play a WAV file
+--   ScrollAudio.mp3(b64_data)  -- play an MP3 file
+--   ScrollAudio.ogg(b64_data)  -- play an OGG file
+--   ScrollAudio.show(mime, b64)-- play any audio MIME type
+--
+-- The browser renders the blob as `<audio controls src="data:<mime>;base64,<b64>">`.
+
+mod ScrollAudio do
+
+doc "Build the raw sentinel string for an audio blob (for testing / composing)."
+fn make_sentinel(mime : String, b64 : String) : String do
+  "__SCROLL_BLOB__:" ++ mime ++ ":" ++ b64 ++ "\n__SCROLL_BLOB_END__\n"
+end
+
+doc """
+Play audio with the given MIME type in the notebook output.
+
+`b64` must be a valid base64-encoded representation of the audio bytes.
+The browser renders the result as `<audio controls src="data:<mime>;base64,<b64>">`.
+
+## Examples
+
+    march> ScrollAudio.show("audio/wav", "UklGR...")
+    ()
+"""
+fn show(mime : String, b64 : String) : () do
+  print(make_sentinel(mime, b64))
+end
+
+doc "Play a WAV audio file. `b64` is the base64-encoded WAV bytes."
+fn wav(b64 : String) : () do show("audio/wav", b64) end
+
+doc "Play an MP3 audio file. `b64` is the base64-encoded MP3 bytes."
+fn mp3(b64 : String) : () do show("audio/mpeg", b64) end
+
+doc "Play an OGG audio file. `b64` is the base64-encoded OGG bytes."
+fn ogg(b64 : String) : () do show("audio/ogg", b64) end
+
+end

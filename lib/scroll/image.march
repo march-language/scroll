@@ -1,0 +1,61 @@
+-- lib/scroll/image.march — Emit image blobs via the __SCROLL_BLOB__ sentinel protocol.
+--
+-- User (or stdlib) code calls these helpers to display images in the notebook:
+--
+--   ScrollImage.png(b64_data)   -- display a PNG image
+--   ScrollImage.jpeg(b64_data)  -- display a JPEG image
+--   ScrollImage.gif(b64_data)   -- display an animated GIF
+--   ScrollImage.webp(b64_data)  -- display a WebP image
+--   ScrollImage.svg(b64_data)   -- display an SVG image (base64-encoded)
+--   ScrollImage.show(mime, b64) -- display any image MIME type
+--
+-- Each function prints a sentinel block and returns unit:
+--   __SCROLL_BLOB__:<mime>:<base64>\n
+--   __SCROLL_BLOB_END__\n
+--
+-- The runtime strips these sentinels and passes the (mime, data) pairs to the
+-- browser, which renders them with <img src="data:<mime>;base64,<data>">.
+--
+-- Design:
+--   - `make_sentinel/2` is exposed as a `fn` so tests can verify the format.
+--   - `show/2` and convenience functions print the sentinel via `print`.
+--   - No validation of base64 content — callers are responsible for encoding.
+
+mod ScrollImage do
+
+doc "Build the raw sentinel string for an image blob (for testing / composing)."
+fn make_sentinel(mime : String, b64 : String) : String do
+  "__SCROLL_BLOB__:" ++ mime ++ ":" ++ b64 ++ "\n__SCROLL_BLOB_END__\n"
+end
+
+doc """
+Display an image with the given MIME type in the notebook output.
+
+`b64` must be a valid base64-encoded representation of the image bytes.
+The browser renders the result as `<img src="data:<mime>;base64,<b64>">`.
+
+## Examples
+
+    march> ScrollImage.show("image/png", "aGVsbG8=")
+    ()
+"""
+fn show(mime : String, b64 : String) : () do
+  print(make_sentinel(mime, b64))
+end
+
+doc "Display a PNG image. `b64` is the base64-encoded PNG bytes."
+fn png(b64 : String) : () do show("image/png", b64) end
+
+doc "Display a JPEG image. `b64` is the base64-encoded JPEG bytes."
+fn jpeg(b64 : String) : () do show("image/jpeg", b64) end
+
+doc "Display an animated GIF. `b64` is the base64-encoded GIF bytes."
+fn gif(b64 : String) : () do show("image/gif", b64) end
+
+doc "Display a WebP image. `b64` is the base64-encoded WebP bytes."
+fn webp(b64 : String) : () do show("image/webp", b64) end
+
+doc "Display an SVG image. `b64` is the base64-encoded SVG+XML bytes."
+fn svg(b64 : String) : () do show("image/svg+xml", b64) end
+
+end

@@ -1,0 +1,123 @@
+-- test/test_code.march
+-- Tests for lib/scroll/code.march (ScrollCode module).
+--
+-- Covers:
+--   fenced/2 — CommonMark-safe fenced code-block builder used to produce
+--              syntax-highlightable cell output (Stage 1.3 of parity-plan).
+--
+-- Run with:  forge test test/test_code.march
+--            forge test --filter 'ScrollCode.fenced'
+
+mod TestCode do
+
+-- ── Property-test helpers ────────────────────────────────────────────────────
+-- Defined up-front so the type inferencer can resolve them before use.
+-- Following the same pattern as test_scroll.march: avoid Gen.string_of (RC
+-- bug in the installed march binary) by generating Int lists and converting.
+
+pfn codes_to_str(lst : List(Int)) : String do
+  String.join(List.map(lst, fn h -> Char.to_string(Char.from_int(h))), "")
+end
+
+-- Printable ASCII 32..126 plus biased extra backticks + newlines.  The
+-- backtick (96) is already in the printable range; we don't duplicate it.
+pfn body_codes() do Gen.list(Gen.int(32, 126)) end
+
+-- ── Unit tests ───────────────────────────────────────────────────────────────
+
+describe "ScrollCode.fenced" do
+
+  test "wraps value in a ```lang ... ``` fence" do
+    assert (ScrollCode.fenced("json", "{}") == "```json\n{}\n```")
+  end
+
+  test "multi-line values keep their internal newlines" do
+    let body = "line 1\nline 2\nline 3"
+    assert (ScrollCode.fenced("text", body) == "```text\nline 1\nline 2\nline 3\n```")
+  end
+
+  test "empty value collapses to a single-line body" do
+    -- No blank body line; closing fence sits on the line after the open fence.
+    assert (ScrollCode.fenced("text", "") == "```text\n```")
+  end
+
+  test "empty lang produces an unspecified-language fence" do
+    assert (ScrollCode.fenced("", "hi") == "```\nhi\n```")
+  end
+
+  test "trailing newline in value is not duplicated" do
+    -- Callers often pass values with a trailing newline (e.g. from println or
+    -- file contents).  The closing fence still sits on its own line.
+    assert (ScrollCode.fenced("text", "hi\n") == "```text\nhi\n```")
+  end
+
+  test "multiple trailing newlines in value collapse to one" do
+    assert (ScrollCode.fenced("text", "hi\n\n\n") == "```text\nhi\n```")
+  end
+
+  test "value containing a 3-backtick run uses a 4-backtick fence" do
+    let body = "before\n```\nafter"
+    let want = "````text\nbefore\n```\nafter\n````"
+    assert (ScrollCode.fenced("text", body) == want)
+  end
+
+  test "value with 4-backtick run uses a 5-backtick fence" do
+    let body = "a\n````\nb"
+    let want = "`````text\na\n````\nb\n`````"
+    assert (ScrollCode.fenced("text", body) == want)
+  end
+
+  test "value with backticks mid-line does not escalate the fence" do
+    -- Inline backticks (not a full line of backticks) can't close a fence,
+    -- so the minimum 3-backtick opener is still safe.
+    let body = "this is `inline` code"
+    assert (ScrollCode.fenced("md", body) == "```md\nthis is `inline` code\n```")
+  end
+
+  test "value that is just backticks still closes cleanly" do
+    -- Pathological: the whole value is a fence marker.  We must still pick
+    -- a fence strictly longer than the embedded run.
+    let body = "```"
+    assert (ScrollCode.fenced("text", body) == "````text\n```\n````")
+  end
+
+end
+
+-- ── Property tests ───────────────────────────────────────────────────────────
+
+describe "ScrollCode.fenced properties" do
+
+  test "output always starts with a backtick" do
+    Check.all(body_codes(), fn codes ->
+      let body = codes_to_str(codes)
+      String.starts_with(ScrollCode.fenced("x", body), "`")
+    )
+  end
+
+  test "output always ends with a backtick" do
+    Check.all(body_codes(), fn codes ->
+      let body = codes_to_str(codes)
+      String.ends_with(ScrollCode.fenced("x", body), "`")
+    )
+  end
+
+  test "output contains the lang tag immediately after the opener" do
+    Check.all(body_codes(), fn codes ->
+      let body = codes_to_str(codes)
+      String.contains(ScrollCode.fenced("mylang", body), "```mylang\n")
+    )
+  end
+
+  test "output size is at least 2 * min_fence + lang + body" do
+    -- With a minimal 3-backtick fence, total size >= 6 + lang + body.
+    -- Longer fences (for pathological bodies) only grow the output.
+    Check.all(body_codes(), fn codes ->
+      let body = codes_to_str(codes)
+      let out = ScrollCode.fenced("js", body)
+      String.byte_size(out) >= 6 + String.byte_size("js") + String.byte_size(body)
+    )
+  end
+
+end
+
+end

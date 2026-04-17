@@ -1,0 +1,138 @@
+-- lib/scroll/blob_parser.march — Strip __SCROLL_BLOB__ sentinels from raw
+-- cell stdout and return them as structured blob items.
+--
+-- Stage 2.1 of specs/parity-plan.md introduces binary output via a sentinel
+-- protocol.  User (or stdlib) code emits:
+--
+--   __SCROLL_BLOB__:<mime>:<base64>\n
+--   __SCROLL_BLOB_END__\n
+--
+-- anywhere in stdout.  `runtime.march` passes the raw output through
+-- `BlobParser.parse/1` before forwarding to the browser.  The browser renders
+-- each blob via `renderBlob` (see assets/js/scroll.js Stage 2 additions).
+--
+-- Design:
+--   - parse/1 is the single public entry point.
+--   - All helpers are pfn — accessible to tests, not exported as public API.
+--   - Size cap: 8 MB of raw binary data = ~11.2 MB of base64.  Any larger
+--     blob is dropped and replaced with a human-readable error line in the
+--     text output.
+--   - Malformed sentinels (missing end marker, empty MIME, no colon) are
+--     silently passed through as plain text — we never lose user output.
+
+mod BlobParser do
+
+-- ── Constants ─────────────────────────────────────────────────────────────────
+
+-- Maximum base64 payload length for a single blob.
+-- 8 MB of raw bytes → ceil(8*1024*1024 * 4/3) = 11,184,812 base64 chars.
+-- We compare against this to avoid decoding the data just to check size.
+doc "Maximum base64 character count permitted for a single blob (≈ 8 MB decoded)."
+fn max_blob_b64_bytes() : Int do 11184812 end
+
+pfn blob_start() : String do "__SCROLL_BLOB__:" end
+pfn blob_end()   : String do "__SCROLL_BLOB_END__\n" end
+
+-- ── Public API ────────────────────────────────────────────────────────────────
+
+doc """
+Parse raw cell stdout, extracting `__SCROLL_BLOB__` sentinel blocks.
+
+Returns `(clean_text, blobs)` where:
+  - `clean_text` is the stdout with all sentinel blocks removed (and error
+    placeholders inserted for any blobs that exceeded the size cap).
+  - `blobs` is a list of `(mime, base64_data)` pairs in emission order.
+
+Malformed sentinels (missing end marker, empty MIME, no colon between MIME
+and data) are treated as plain text and kept in `clean_text` unchanged.
+
+## Examples
+
+    march> BlobParser.parse("hello\n")
+    ("hello\n", [])
+    march> BlobParser.parse("")
+    ("", [])
+"""
+fn parse(raw : String) : (String, List((String, String))) do
+  parse_with_limit(raw, max_blob_b64_bytes())
+end
+
+doc "Like parse/1 but with a custom base64 size cap. Intended for testing."
+fn parse_with_limit(raw : String, limit : Int) : (String, List((String, String))) do
+  let (text, blobs_rev) = go(raw, "", Nil, limit)
+  (text, List.reverse(blobs_rev))
+end
+
+-- ── Helpers ───────────────────────────────────────────────────────────────────
+
+-- Main recursive parser.  Scans `remaining` for the next __SCROLL_BLOB__:
+-- header.  Everything before it is appended to `text_acc`.  On finding a
+-- complete sentinel pair (start + end marker), the blob is validated and
+-- either added to `blobs_acc` or turned into an error placeholder.
+-- `limit` is the maximum base64 payload size in bytes.
+pfn go(remaining : String, text_acc : String, blobs_acc : List((String, String)),
+       limit : Int) : (String, List((String, String))) do
+  match String.split_first(remaining, blob_start()) do
+    None ->
+      -- No more sentinels; append rest of input to text.
+      (text_acc ++ remaining, blobs_acc)
+    Some((before, after)) ->
+      -- `after` is the content following "__SCROLL_BLOB__:" (i.e. starts
+      -- with the mime:base64 header line).
+      match String.split_first(after, "\n") do
+        None ->
+          -- No newline after the header → malformed; treat entire remaining
+          -- portion as text and stop (there can be nothing useful after).
+          (text_acc ++ before ++ blob_start() ++ after, blobs_acc)
+        Some((header, rest_after_header)) ->
+          -- `rest_after_header` should begin with __SCROLL_BLOB_END__\n.
+          match String.split_first(rest_after_header, blob_end()) do
+            None ->
+              -- No end marker → malformed; pass everything through as text.
+              (text_acc ++ before ++ blob_start() ++ header ++ "\n" ++ rest_after_header,
+               blobs_acc)
+            Some((between, after_end)) ->
+              -- `between` is the content between the header newline and the
+              -- end marker.  For a well-formed sentinel it should be empty;
+              -- if non-empty, the sentinel is malformed — pass through.
+              if not(String.is_empty(between)) do
+                let kept = blob_start() ++ header ++ "\n" ++ between ++ blob_end()
+                go(after_end, text_acc ++ before ++ kept, blobs_acc, limit)
+              else
+                -- Parse "mime:base64" from header.
+                match parse_header(header) do
+                  None ->
+                    -- Invalid header (no colon or empty MIME); keep as text.
+                    let kept = blob_start() ++ header ++ "\n" ++ blob_end()
+                    go(after_end, text_acc ++ before ++ kept, blobs_acc, limit)
+                  Some((mime, b64)) ->
+                    -- Size check: reject blobs exceeding the configured limit.
+                    if String.byte_size(b64) > limit do
+                      let mb = String.from_int(String.byte_size(b64) / 1024 / 1024)
+                      let err = "[blob too large: " ++ mb ++ " MB — max 8 MB]\n"
+                      go(after_end, text_acc ++ before ++ err, blobs_acc, limit)
+                    else
+                      go(after_end, text_acc ++ before,
+                         Cons((mime, b64), blobs_acc), limit)
+                    end
+                end
+              end
+          end
+      end
+  end
+end
+
+-- Parse the blob header line: "mime/type:base64data".
+-- Returns None if the header has no colon or the MIME part is empty.
+-- Exposed as `fn` (not `pfn`) so test suites can property-test it directly.
+fn parse_header(header : String) : Option((String, String)) do
+  match String.split_first(header, ":") do
+    None -> None
+    Some((mime, b64)) ->
+      if String.is_empty(mime) do None
+      else Some((mime, b64))
+      end
+  end
+end
+
+end

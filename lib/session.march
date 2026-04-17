@@ -140,7 +140,7 @@ mod Session do
             let cells = parse_cells(content)
             match Processes.start_run_proc(cells, idx, march_bin, env_str, nb_path, conn_id) do
             Err(msg) -> do
-              WebSocket.send_frame(socket, TextFrame(output_msg(idx, "", Some(msg), [])))
+              WebSocket.send_frame(socket, TextFrame(output_msg(idx, "", [], Some(msg), [])))
             end
             Ok(_sid) -> do
               WebSocket.send_frame(socket, TextFrame("{\"type\":\"running\",\"index\":" ++ String.from_int(idx) ++ "}"))
@@ -167,10 +167,10 @@ mod Session do
               ",\"live\":" ++ json_str(live) ++ "}"
             ))
           end
-          Some((out, err_opt, vars)) -> do
+          Some((out, blobs, err_opt, vars)) -> do
             let add_results = Runner.process_forge_adds(out, nb_path)
             let clean_out = Runner.strip_forge_adds(out)
-            WebSocket.send_frame(socket, TextFrame(output_msg(idx, clean_out, err_opt, vars)))
+            WebSocket.send_frame(socket, TextFrame(output_msg(idx, clean_out, blobs, err_opt, vars)))
             List.each(add_results, fn result -> send_dep_result(socket, result))
           end
           end
@@ -183,7 +183,7 @@ mod Session do
         None -> WebSocket.send_frame(socket, err_frame("missing index"))
         Some(idx) -> do
           Processes.stop_run_proc(nb_path, conn_id)
-          WebSocket.send_frame(socket, TextFrame(output_msg(idx, "", Some("interrupted"), [])))
+          WebSocket.send_frame(socket, TextFrame(output_msg(idx, "", [], Some("interrupted"), [])))
         end
         end
         nb_path

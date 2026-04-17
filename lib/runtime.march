@@ -34,6 +34,8 @@
 mod Runtime do
 
 import Shell
+-- BlobParser (lib/scroll/blob_parser.march) is part of this project and
+-- resolved automatically by forge — no explicit import needed for sub-path modules.
 
 pfn trim(s) do String.trim(s) end
 
@@ -309,7 +311,10 @@ pfn find_sentinel_n(s, n, session_id) do
 end
 
 -- Poll for the target cell's output.
--- Returns None if still running, Some((output, err_opt)) when done.
+-- Returns None if still running, Some((clean_text, blobs, err_opt)) when done.
+--
+-- `clean_text` is the stdout with all __SCROLL_BLOB__ sentinels removed.
+-- `blobs` is a list of (mime, base64_data) pairs in emission order.
 --
 -- Sentinel layout in the output file for M total code cells:
 --   sentinel 0       : :reset acknowledgement
@@ -320,7 +325,7 @@ end
 -- We locate the end of sentinel (skip-1), then find the next sentinel from there.
 fn poll_result(session_id) do
   match Vault.ns_get(rt_ns(), rt_skip_key(session_id)) do
-    None -> Some(("", Some("no active run for this session")))
+    None -> Some(("", Nil, Some("no active run for this session")))
     Some(skip_s) ->
       let skip = match String.to_int(skip_s) do Ok(n) -> n | Err(_) -> 0 end
       let outp = rt_out_path(session_id)
@@ -355,14 +360,16 @@ fn poll_result(session_id) do
                     String.slice(raw_out, 0, String.byte_size(raw_out) - 1)
                   else raw_out
                   end
+                  -- Strip blob sentinels from the raw output.
+                  let (clean_out, blobs) = BlobParser.parse(out)
                   -- Also surface any stderr that accumulated.
                   let errp = rt_err_path(session_id)
                   let err_raw = match File.read(errp) do Ok(s) -> trim(s) | Err(_) -> "" end
                   let combined =
-                    if String.is_empty(err_raw) do out
+                    if String.is_empty(err_raw) do clean_out
                     else
-                      let sep = if String.is_empty(out) do "" else "\n" end
-                      out ++ sep ++ "[stderr]\n" ++ err_raw
+                      let sep = if String.is_empty(clean_out) do "" else "\n" end
+                      clean_out ++ sep ++ "[stderr]\n" ++ err_raw
                     end
                   -- Cap at 64 KB to match the subprocess model.
                   let combined =
@@ -370,7 +377,7 @@ fn poll_result(session_id) do
                       String.slice(combined, 0, 65536) ++ "\n[output truncated at 64 KB]"
                     else combined
                     end
-                  Some((combined, None))
+                  Some((combined, blobs, None))
               end
           end
       end

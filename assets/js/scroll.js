@@ -102,7 +102,7 @@ if (document.fonts && document.fonts.ready) {
 
 function handleMsg(msg) {
   if (msg.type === "notebook") {
-    cells = msg.cells.map(c => ({...c, output:"", error:null, running:false, _elapsed_ms:null, live_output:""}));
+    cells = msg.cells.map(c => ({...c, output:"", blobs:[], error:null, running:false, _elapsed_ms:null, live_output:""}));
     window._nbCells = cells;
     render();
     setStatus("ok", "loaded");
@@ -130,6 +130,7 @@ function handleMsg(msg) {
       cells[idx].running = false;
       cells[idx].live_output = "";
       cells[idx].output  = msg.stdout || "";
+      cells[idx].blobs   = msg.blobs  || [];
       cells[idx].error   = msg.error || null;
       cells[idx]._elapsed_ms = cells[idx]._start_ms ? Date.now() - cells[idx]._start_ms : null;
       if (!msg.error) cells[idx]._dirty = false;
@@ -317,7 +318,7 @@ function runAll() {
   // Stop any in-progress polls before resetting state — prevents stale
   // intervals from firing poll_run for wrong indices after render().
   Object.keys(runPolls).forEach(idx => stopRunPoll(Number(idx)));
-  cells.forEach(c => { c.output=""; c.error=null; c.running=false; c._dirty=false; c.live_output=""; });
+  cells.forEach(c => { c.output=""; c.blobs=[]; c.error=null; c.running=false; c._dirty=false; c.live_output=""; });
   render();
   runAllTotal = cells.filter(c => c.kind === "code").length;
   runAllDone  = 0;
@@ -361,6 +362,8 @@ function copyOutput(idx) {
 }
 
 // ── Long-running static analysis ─────────────────────────────────────────────
+// Canonical, unit-tested implementations live in assets/js/scroll-utils.js.
+// This file uses classic <script> loading (no import) so functions are inlined.
 
 const SLOW_PATTERNS = [
   /\bHttp\./,/\bHttpClient\./,/\bHttpTransport\./,
@@ -376,6 +379,55 @@ function isPotentiallyLongRunning(src) {
   const m = src.match(/\bfn\s+(\w+)\s*\(/);
   if (m && new RegExp('\\b' + m[1] + '\\s*\\(').test(src.slice(src.indexOf(m[0]) + m[0].length))) return true;
   return false;
+}
+
+// ── Blob rendering (Stage 2.1) ───────────────────────────────────────────────
+// Renders a single {mime, data} blob object from an output message.
+// Dispatch table:
+//   image/*          → <img>
+//   audio/*          → <audio controls>
+//   video/*          → <video controls>
+//   application/pdf  → <embed> + download link
+
+function renderBlob(blob) {
+  const mime = blob.mime || '';
+  const src = `data:${esc(mime)};base64,${blob.data}`;
+  if (mime.startsWith('image/')) {
+    return `<div class="blob-wrap blob-image"><img src="${src}" alt="" style="max-width:100%;border-radius:4px;display:block"></div>`;
+  }
+  if (mime.startsWith('audio/')) {
+    return `<div class="blob-wrap blob-audio"><audio controls src="${src}" style="width:100%;margin:4px 0"></audio></div>`;
+  }
+  if (mime.startsWith('video/')) {
+    return `<div class="blob-wrap blob-video"><video controls src="${src}" style="max-width:100%;border-radius:4px;display:block"></video></div>`;
+  }
+  if (mime === 'application/pdf') {
+    return `<div class="blob-wrap blob-pdf"><embed type="application/pdf" src="${src}" style="width:100%;height:480px;border-radius:4px"></embed><div style="margin-top:4px;font-size:12px"><a href="${src}" download="output.pdf">Download PDF</a></div></div>`;
+  }
+  // Unknown MIME — show a download link
+  return `<div class="blob-wrap blob-unknown"><a href="${src}" download="output.bin">[${esc(mime)} blob — download]</a></div>`;
+}
+
+function renderBlobs(blobs) {
+  if (!blobs || blobs.length === 0) return '';
+  return blobs.map(renderBlob).join('');
+}
+
+// ── Fenced output parsing (Stage 1.3) ────────────────────────────────────────
+// Canonical impl: assets/js/scroll-utils.js parseFencedOutput — keep in sync.
+
+function parseFencedOutput(text) {
+  const t = text.trimStart();
+  const openMatch = t.match(/^(`{3,})([^\n`]*)\n/);
+  if (!openMatch) return null;
+  const fence = openMatch[1];
+  const lang = openMatch[2].trim();
+  const afterOpen = t.slice(openMatch[0].length);
+  const closePattern = new RegExp('(?:^|\\n)' + fence.replace(/`/g, '\\`') + '(?:`*)(?:\\n|$)');
+  const closeMatch = closePattern.exec(afterOpen);
+  if (!closeMatch) return null;
+  const body = afterOpen.slice(0, closeMatch.index);
+  return { lang, body: body.replace(/\n$/, '') };
 }
 
 function saveNotebook() {
@@ -900,6 +952,15 @@ function renderOutput(text) {
       : text;
     return `<div class="cell-out-html">${clean}</div>`;
   }
+  // Stage 1.3: CommonMark fenced code block — syntax-highlighted output.
+  // ScrollCode.fenced("json", value) produces this format on the server side.
+  const fenced = parseFencedOutput(text);
+  if (fenced !== null) {
+    const { lang, body } = fenced;
+    const langAttr = lang ? ` data-lang="${esc(lang)}"` : '';
+    const langLabel = lang ? `<span class="fenced-lang">${esc(lang)}</span>` : '';
+    return `<div class="cell-out-fenced"${langAttr}>${langLabel}<pre><code>${esc(body)}</code></pre></div>`;
+  }
   return `<div class="cell-out">${esc(text)}</div>`;
 }
 
@@ -919,12 +980,13 @@ function codeCell(idx, cell) {
   const srcToggle = `<button class="add-btn" onclick="toggleSrcCollapse(${idx})" title="${srcCollapsed?'Expand source':'Collapse source'}" aria-label="${srcCollapsed?'Expand source':'Collapse source'}">${srcCollapsed?'⌄':'⌃'}</button>`;
   const outToggle = `<button class="add-btn" onclick="toggleOutCollapse(${idx})" title="${outCollapsed?'Expand output':'Collapse output'}" aria-label="${outCollapsed?'Expand output':'Collapse output'}">${outCollapsed?'▸':'▾'}</button>`;
   const srcPreview = srcCollapsed ? `<div class="src-preview" onclick="toggleSrcCollapse(${idx})">${esc(cell.source.split('\\n')[0])}</div>` : "";
-  const hasOut = !!(cell.output || cell.error);
+  const blobsHtml = renderBlobs(cell.blobs);
+  const hasOut = !!(cell.output || cell.error || blobsHtml);
   const copyBtn = hasOut ? `<button class="copy-btn" onclick="copyOutput(${idx})">Copy</button>` : "";
   const outHtml = cell.error
-    ? `<div class="cell-out-wrap">${copyBtn}<div class="cell-err">${esc(cell.error)}</div></div>`
-    : cell.output
-      ? `<div class="cell-out-wrap">${copyBtn}${renderOutput(cell.output)}</div>`
+    ? `<div class="cell-out-wrap">${copyBtn}<div class="cell-err">${esc(cell.error)}</div>${blobsHtml}</div>`
+    : (cell.output || blobsHtml)
+      ? `<div class="cell-out-wrap">${copyBtn}${cell.output ? renderOutput(cell.output) : ""}${blobsHtml}</div>`
       : "";
   const liveHtml = cell.running && cell.live_output
     ? `<div class="cell-live-out"><pre>${esc(cell.live_output)}</pre></div>`
