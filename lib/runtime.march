@@ -215,12 +215,10 @@ fn start_runtime(session_id, march_bin, env_str) do
 
   -- MARCH_SCROLL_MODE=1 activates sentinel output in the REPL.
   -- MARCH_SCROLL_SENTINEL=<token> overrides the default sentinel string.
-  -- MARCH_REPL_INTERP=1 forces interpreter mode (no JIT) for faster startup.
   -- We use `export` before `exec` because exec in POSIX sh does not accept
   -- inline KEY=val assignments the way a normal command invocation does.
   let shell = ep ++ "export MARCH_SCROLL_MODE=1; " ++
-              "export MARCH_SCROLL_SENTINEL=" ++ sh_quote(sentinel_token) ++ "; " ++
-              "export MARCH_REPL_INTERP=1; exec " ++
+              "export MARCH_SCROLL_SENTINEL=" ++ sh_quote(sentinel_token) ++ "; exec " ++
               sh_quote(march_bin) ++ " repl >" ++ outp ++ " 2>" ++ errp
 
   match Process.spawn_async("sh", ["-c", shell]) do
