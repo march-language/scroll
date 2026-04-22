@@ -142,7 +142,7 @@ mod Page do
       "<div id=\"inspector-body\"><p class=\"inspector-empty\">Run a cell to see variables.</p></div>\n" ++
       "</div>\n" ++
       "</div>\n" ++
-      "<script src=\"/assets/js/scroll.js\"></script>\n" ++
+      "<script src=\"/assets/js/scroll.js?v=" ++ String.from_int(System.pid()) ++ "\"></script>\n" ++
       "</body>\n" ++
       "</html>\n"
 

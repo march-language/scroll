@@ -68,6 +68,10 @@ pfn rt_proc_key(sid)     do sid ++ ":proc" end
 pfn rt_out_key(sid)      do sid ++ ":out" end
 pfn rt_skip_key(sid)     do sid ++ ":skip" end
 pfn rt_sentinel_key(sid) do sid ++ ":sentinel" end
+pfn rt_env_key(sid)      do sid ++ ":env" end
+pfn rt_cell_state_key(sid) do sid ++ ":cell_state" end
+pfn rt_out_start_key(sid)  do sid ++ ":out_start" end
+pfn rt_err_start_key(sid)  do sid ++ ":err_start" end
 
 -- Replace path separators so the session ID can be used as a filename.
 pfn sanitize_sid(sid)    do String.replace_all(sid, "/", "_") end
@@ -148,24 +152,57 @@ pfn env_prefix(env_str) do
   end
 end
 
--- Start a new REPL process for session_id.  Kills any existing one first.
+-- Start (or reuse) the REPL for session_id.
+-- Reuses the existing process when the env string is unchanged — avoids
+-- ~100–200 ms of process-spawn overhead on repeated cell runs.
+-- Always clears the output files so poll_result sees only the new run's output.
 -- The REPL's stdout/stderr are redirected to temp files so we can poll them.
 -- We use `exec` so the shell is replaced by the REPL process itself, meaning
 -- the LiveProcess handle gives us the REPL's PID directly.
 fn start_runtime(session_id, march_bin, env_str) do
-  -- Kill any existing REPL for this session.
-  match get_proc(session_id) do
+  let ep = env_prefix(env_str)
+  let existing_proc = get_proc(session_id)
+  let stored_ep = match Vault.ns_get(rt_ns(), rt_env_key(session_id)) do
+    Some(s) -> s
+    None    -> ""
+  end
+
+  let outp = rt_out_path(session_id)
+  let errp = rt_err_path(session_id)
+
+  -- Reuse the running REPL when env is unchanged; just wipe the output files
+  -- so the next poll_result scan starts clean.  The REPL is idle (blocked on
+  -- stdin) so truncating the files does not race with any in-flight output.
+  let can_reuse = match existing_proc do Some(_) -> true | None -> false end
+  if can_reuse && ep == stored_ep do
+    -- Don't truncate: File.write creates a new inode, invalidating the REPL's
+    -- stdout FD.  Instead record the current file size; poll functions scan from
+    -- that offset so they only see output from this run.
+    let out_start = match File.read(outp) do Ok(s) -> String.byte_size(s) | Err(_) -> 0 end
+    let err_start = match File.read(errp) do Ok(s) -> String.byte_size(s) | Err(_) -> 0 end
+    let _ = Vault.ns_set(rt_ns(), rt_out_start_key(session_id), String.from_int(out_start))
+    let _ = Vault.ns_set(rt_ns(), rt_err_start_key(session_id), String.from_int(err_start))
+    match existing_proc do
+      Some(proc) -> Ok(proc)
+      None       -> Err("unreachable: can_reuse but no proc")
+    end
+  else
+
+  -- Kill the existing REPL if env changed or it was never started.
+  -- Clear committed cell state so the next write_cells starts fresh.
+  match existing_proc do
     None -> ()
     Some(proc) ->
       let _ = Process.kill(proc)
       let _ = Vault.ns_drop(rt_ns(), rt_proc_key(session_id))
       ()
   end
+  let _ = Vault.ns_drop(rt_ns(), rt_cell_state_key(session_id))
 
-  let outp = rt_out_path(session_id)
-  let errp = rt_err_path(session_id)
   let _ = File.write(outp, "")
   let _ = File.write(errp, "")
+  let _ = Vault.ns_set(rt_ns(), rt_out_start_key(session_id), "0")
+  let _ = Vault.ns_set(rt_ns(), rt_err_start_key(session_id), "0")
 
   -- Generate a per-session random sentinel so user output that happens to
   -- contain the old fixed string "__SCROLL_DONE__" cannot corrupt the counter.
@@ -176,7 +213,6 @@ fn start_runtime(session_id, march_bin, env_str) do
                        "_" ++ String.from_int(System.monotonic_time()) ++ "__"
   let _ = Vault.ns_set(rt_ns(), rt_sentinel_key(session_id), sentinel_token)
 
-  let ep = env_prefix(env_str)
   -- MARCH_SCROLL_MODE=1 activates sentinel output in the REPL.
   -- MARCH_SCROLL_SENTINEL=<token> overrides the default sentinel string.
   -- MARCH_REPL_INTERP=1 forces interpreter mode (no JIT) for faster startup.
@@ -191,8 +227,11 @@ fn start_runtime(session_id, march_bin, env_str) do
     Err(msg) -> Err("failed to start runtime: " ++ msg)
     Ok(proc) ->
       let _ = Vault.ns_set(rt_ns(), rt_proc_key(session_id), encode_proc(proc))
+      let _ = Vault.ns_set(rt_ns(), rt_env_key(session_id), ep)
       Ok(proc)
   end
+
+  end  -- end if can_reuse
 end
 
 -- Kill the REPL and remove all Vault entries for this session.
@@ -209,12 +248,82 @@ fn stop_runtime(session_id) do
   let _ = Vault.ns_drop(rt_ns(), rt_out_key(session_id))
   let _ = Vault.ns_drop(rt_ns(), rt_skip_key(session_id))
   let _ = Vault.ns_drop(rt_ns(), rt_sentinel_key(session_id))
+  let _ = Vault.ns_drop(rt_ns(), rt_env_key(session_id))
+  let _ = Vault.ns_drop(rt_ns(), rt_cell_state_key(session_id))
+  let _ = Vault.ns_drop(rt_ns(), rt_out_start_key(session_id))
+  let _ = Vault.ns_drop(rt_ns(), rt_err_start_key(session_id))
   let _ = File.delete(rt_out_path(session_id))
   let _ = File.delete(rt_err_path(session_id))
   ()
 end
 
 -- ── Cell feeding ──────────────────────────────────────────────────────────────
+
+-- No-op: with O(1) reset and incremental cell execution, pre-issuing :reset
+-- during idle time has no benefit.  write_cells handles all reset logic.
+fn preload_reset(session_id) do
+  let _ = session_id
+  ()
+end
+
+-- ── Cell-state helpers ───────────────────────────────────────────────────────
+
+-- Encode a list of source strings as a length-prefixed blob so any byte
+-- (including newlines and pipes) can appear in source without ambiguity.
+-- Format: "<count>|<len1>|<src1_bytes><len2>|<src2_bytes>..."
+pfn encode_cell_state(srcs) do
+  let n = List.length(srcs)
+  let parts = List.map(srcs, fn s ->
+    String.from_int(String.byte_size(s)) ++ "|" ++ s
+  )
+  String.from_int(n) ++ "|" ++ String.join(parts, "")
+end
+
+pfn decode_cell_state(s) do
+  match String.split_first(s, "|") do
+    None -> Nil
+    Some((n_s, rest)) ->
+      match String.to_int(n_s) do
+        Err(_) -> Nil
+        Ok(n) ->
+          fn read_n(remaining, i, acc) do
+            if i >= n do List.reverse(acc)
+            else
+              match String.split_first(remaining, "|") do
+                None -> List.reverse(acc)
+                Some((len_s, after_pipe)) ->
+                  match String.to_int(len_s) do
+                    Err(_) -> List.reverse(acc)
+                    Ok(len) ->
+                      let src = String.slice(after_pipe, 0, len)
+                      let rest2 = String.slice(after_pipe, len,
+                                               String.byte_size(after_pipe) - len)
+                      read_n(rest2, i + 1, Cons(src, acc))
+                  end
+              end
+            end
+          end
+          read_n(rest, 0, Nil)
+      end
+  end
+end
+
+-- True iff every element of `prefix` equals the corresponding element of `xs`.
+pfn srcs_prefix_matches(prefix, xs) do
+  fn go(ps, ts) do
+    match ps do
+      Nil -> true
+      Cons(p, pt) ->
+        match ts do
+          Nil -> false
+          Cons(t, tt) -> if p == t do go(pt, tt) else false end
+        end
+    end
+  end
+  go(prefix, xs)
+end
+
+-- ─────────────────────────────────────────────────────────────────────────────
 
 -- Write each source string to the REPL stdin via a recursive loop so the
 -- compiler cannot eliminate the side-effectful Process.write calls.
@@ -223,6 +332,7 @@ pfn send_all(proc, srcs) do
     Nil -> ()
     Cons(src, rest) ->
       let _ = Process.write(proc, src ++ "\n")
+      let _ = Process.write(proc, ":scroll_done\n")
       send_all(proc, rest)
   end
 end
@@ -247,33 +357,54 @@ pfn collect_code_sources(cells, run_through_idx) do
   go(cells, Nil, 0, 0)
 end
 
--- Send :reset and then all code cells 0..run_through_idx to the REPL stdin.
--- Records in Vault how many __SCROLL_DONE__ sentinels to skip before we
--- reach the target cell's output.
+-- Send cells to the REPL stdin, reusing accumulated state where possible.
 --
--- Returns Ok(skip_count) where skip_count is the number of sentinels before
--- the target cell's output (1 for :reset + one per prior code cell).
+-- Incremental path (no :reset): if the REPL already has cells 0..K-1
+-- from the previous run (same sources, same order), we only send cells K..N.
+-- skip_count = num_new - 1 (skip context sentinels, show target's output).
+--
+-- Reset path: when sources changed or the sequence shrank, send :reset then
+-- all cells 0..N.  skip_count = N (1 :reset sentinel + N-1 context cells).
+--
+-- Returns Ok(skip_count) — the number of sentinels poll_result must skip
+-- before reaching the target cell's output.
 fn write_cells(session_id, proc, cells, run_through_idx) do
-  -- Reset the REPL's accumulated state.
-  let _ = Process.write(proc, ":reset\n")
-
   let (srcs, _target_code_n) = collect_code_sources(cells, run_through_idx)
-
-  -- Guard: there must be at least one code cell to run.  A run_through_idx
-  -- pointing past all code cells has skip_count = 0 which would incorrectly
-  -- treat the :reset sentinel as the target cell's output.
   let num_code_cells = List.length(srcs)
   if num_code_cells == 0 do
     Err("no code cells at or before index " ++ String.from_int(run_through_idx))
   else
 
-  -- Feed all cell sources; the REPL evaluates each, emitting the sentinel
-  -- after every one.  We don't need to wait between them — the pipe buffers.
-  send_all(proc, srcs)
+  let committed = match Vault.ns_get(rt_ns(), rt_cell_state_key(session_id)) do
+    None    -> Nil
+    Some(s) -> decode_cell_state(s)
+  end
+  let committed_n = List.length(committed)
 
-  -- skip_count = 1 (:reset sentinel) + (number of code cells - 1 for all but
-  -- the target cell).  The last sentinel in srcs belongs to the target cell.
-  let skip_count = 1 + (num_code_cells - 1)
+  -- Can extend when committed is a non-empty proper prefix (or equal) of srcs.
+  let can_extend = committed_n > 0
+                   && committed_n <= num_code_cells
+                   && srcs_prefix_matches(committed, srcs)
+
+  let skip_count =
+    if can_extend do
+      let new_srcs = List.drop(srcs, committed_n)
+      let num_new  = List.length(new_srcs)
+      if num_new == 0 do
+        -- Target cell already in REPL; re-run it by sending its source again.
+        let _ = send_all(proc, [List.last(srcs)])
+        0
+      else
+        let _ = send_all(proc, new_srcs)
+        num_new - 1
+      end
+    else
+      let _ = Process.write(proc, ":reset\n")
+      let _ = send_all(proc, srcs)
+      1 + (num_code_cells - 1)
+    end
+
+  let _ = Vault.ns_set(rt_ns(), rt_cell_state_key(session_id), encode_cell_state(srcs))
   let _ = Vault.ns_set(rt_ns(), rt_skip_key(session_id), String.from_int(skip_count))
   let _ = Vault.ns_set(rt_ns(), rt_out_key(session_id), rt_out_path(session_id))
   Ok(skip_count)
@@ -352,7 +483,13 @@ fn poll_result(session_id) do
       let outp = rt_out_path(session_id)
       match File.read(outp) do
         Err(_) -> None
-        Ok(content) ->
+        Ok(raw_content) ->
+          let file_start = match Vault.ns_get(rt_ns(), rt_out_start_key(session_id)) do
+            Some(s) -> match String.to_int(s) do Ok(n) -> n | Err(_) -> 0 end
+            None -> 0
+          end
+          let content = String.slice(raw_content, file_start,
+                                     String.byte_size(raw_content) - file_start)
           -- Locate the start of the target cell's output.
           -- It begins immediately after sentinel (skip-1).
           -- Special case: skip=0 means no prefix sentinels (output starts at byte 0).
@@ -389,7 +526,14 @@ fn poll_result(session_id) do
                   -- Surface stderr, but drop [timing] lines — they appear in
                   -- every REPL invocation and add no diagnostic value.
                   let errp = rt_err_path(session_id)
-                  let err_raw = match File.read(errp) do Ok(s) -> trim(s) | Err(_) -> "" end
+                  let err_start = match Vault.ns_get(rt_ns(), rt_err_start_key(session_id)) do
+                    Some(s) -> match String.to_int(s) do Ok(n) -> n | Err(_) -> 0 end
+                    None -> 0
+                  end
+                  let err_raw = match File.read(errp) do
+                    Ok(s) -> trim(String.slice(s, err_start, String.byte_size(s) - err_start))
+                    Err(_) -> ""
+                  end
                   let err_raw = filter_timing(err_raw)
                   let combined =
                     if String.is_empty(err_raw) do clean_out
@@ -435,7 +579,13 @@ fn poll_live(session_id) do
       let outp = rt_out_path(session_id)
       match File.read(outp) do
         Err(_) -> None
-        Ok(content) ->
+        Ok(raw_content) ->
+          let file_start = match Vault.ns_get(rt_ns(), rt_out_start_key(session_id)) do
+            Some(s) -> match String.to_int(s) do Ok(n) -> n | Err(_) -> 0 end
+            None -> 0
+          end
+          let content = String.slice(raw_content, file_start,
+                                     String.byte_size(raw_content) - file_start)
           let cell_out_start_opt =
             if skip == 0 do Some(0)
             else

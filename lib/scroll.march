@@ -64,7 +64,7 @@ pfn next_conn_id() do
   String.from_int(System.pid()) ++ "_" ++ String.from_int(n)
 end
 
--- ── Asset serving ─────────────────────────────────────────────────────────────
+-- ── Asset root ────────────────────────────────────────────────────────────────
 -- Assets live under <archive_root>/assets/.  At runtime we discover the
 -- archive root from MARCH_LIB_PATH (set by forge to "<root>/lib"); if that's
 -- unavailable (running via bare `march lib/scroll.march`) we fall back to
@@ -86,71 +86,47 @@ fn asset_root() do
   end
 end
 
-fn serve_asset(conn, rel_path, mime) do
-  let full = Path.join(Path.join(asset_root(), "assets"), rel_path)
-  match File.read(full) do
-    Ok(body) ->
-      conn
-      |> HttpServer.put_resp_header("content-type", mime)
-      |> HttpServer.send_resp(200, body)
-    Err(_) ->
-      conn |> HttpServer.text(404, "Not Found: " ++ rel_path)
-  end
+-- ── Security headers ─────────────────────────────────────────────────────────
+-- Applies the safe subset of SecurityHeaders.defaults().  COEP (require-corp)
+-- is intentionally omitted: the notebook UI imports CodeMirror from esm.sh,
+-- which does not send Cross-Origin-Resource-Policy, so require-corp would
+-- block the editor from loading.
+
+pfn security_headers(conn) do
+  conn
+  |> HttpServer.put_resp_header("x-frame-options", "SAMEORIGIN")
+  |> HttpServer.put_resp_header("x-content-type-options", "nosniff")
+  |> HttpServer.put_resp_header("x-xss-protection", "0")
+  |> HttpServer.put_resp_header("referrer-policy", "strict-origin-when-cross-origin")
+  |> HttpServer.put_resp_header("permissions-policy", "camera=(), microphone=(), geolocation=()")
+  |> HttpServer.put_resp_header("cross-origin-opener-policy", "same-origin")
 end
 
--- ── HTTP router ───────────────────────────────────────────────────────────────
+-- ── WebSocket upgrade handler ─────────────────────────────────────────────────
+-- Issue #3: reject WebSocket upgrades from origins other than localhost.
+-- Without this check, any page loaded in the same browser can open a
+-- cross-origin WebSocket to the notebook server and issue save/run
+-- commands (CSRF via WebSocket).
+-- We allow: absent Origin header (CLI clients, curl), localhost, 127.0.0.1.
 
-fn router(nb_path, display_title, port, march_bin, is_temp, conn) do
-  -- Workaround: match method and path separately to avoid an LLVM codegen bug
-  -- where mixing i64 (method atom) and ptr (path_info list) in a single tuple
-  -- destructure causes the optimizer to eliminate all route branches as unreachable.
-  if HttpServer.method(conn) == :get do
-    match HttpServer.path_info(conn) do
-      Nil ->
-        conn |> HttpServer.html(200, Page.ui_html(display_title, port, is_temp))
-
-      Cons("ws", Nil) ->
-        -- Issue #3: reject WebSocket upgrades from origins other than localhost.
-        -- Without this check, any page loaded in the same browser can open a
-        -- cross-origin WebSocket to the notebook server and issue save/run
-        -- commands (CSRF via WebSocket).
-        -- We allow: absent Origin header (CLI clients, curl), localhost, 127.0.0.1.
-        let origin = match HttpServer.get_req_header(conn, "Origin") do
-          None -> "" | Some(o) -> o
-        end
-        let port_str = String.from_int(port)
-        let origin_ok =
-          String.is_empty(origin)                           ||
-          origin == "http://localhost:" ++ port_str         ||
-          origin == "http://127.0.0.1:" ++ port_str         ||
-          origin == "http://localhost"                       ||
-          origin == "http://127.0.0.1"
-        if not(origin_ok) do
-          conn |> HttpServer.text(403, "Forbidden: cross-origin WebSocket not allowed")
-        else
-          WebSocket.upgrade(conn, fn socket ->
-            let conn_id = next_conn_id()
-            Session.ws_loop(socket, nb_path, march_bin, conn_id)
-          )
-        end
-
-      Cons("assets", Cons("css", Cons("scroll.css", Nil))) ->
-        serve_asset(conn, "css/scroll.css", "text/css; charset=utf-8")
-
-      Cons("assets", Cons("js", Cons("scroll.js", Nil))) ->
-        serve_asset(conn, "js/scroll.js", "application/javascript; charset=utf-8")
-
-      Cons("assets", Cons("js", Cons("editor.js", Nil))) ->
-        serve_asset(conn, "js/editor.js", "application/javascript; charset=utf-8")
-
-      Cons("assets", Cons("js", Cons("purify.min.js", Nil))) ->
-        serve_asset(conn, "js/purify.min.js", "application/javascript; charset=utf-8")
-
-      _ ->
-        conn |> HttpServer.text(404, "Not Found")
-    end
+pfn ws_handler(nb_path, march_bin, port, conn) do
+  let origin = match HttpServer.get_req_header(conn, "Origin") do
+    None -> "" | Some(o) -> o
+  end
+  let port_str = String.from_int(port)
+  let origin_ok =
+    String.is_empty(origin)                           ||
+    origin == "http://localhost:" ++ port_str         ||
+    origin == "http://127.0.0.1:" ++ port_str         ||
+    origin == "http://localhost"                       ||
+    origin == "http://127.0.0.1"
+  if not(origin_ok) do
+    conn |> HttpServer.text(403, "Forbidden: cross-origin WebSocket not allowed")
   else
-    conn |> HttpServer.text(404, "Not Found")
+    WebSocket.upgrade(conn, fn socket ->
+      let conn_id = next_conn_id()
+      Session.ws_loop(socket, nb_path, march_bin, conn_id)
+    )
   end
 end
 
@@ -261,11 +237,36 @@ fn main() do
   IO.puts("scroll: debug log: " ++ log_path)
   IO.puts("scroll: press Ctrl-C to stop")
 
-  let server = HttpServer.new(port)
-  let server = HttpServer.plug(server, fn req_conn ->
-    router(nb_path, display_title, port, march_bin, is_temp, req_conn)
-  )
-  HttpServer.listen(server)
+  let static_plug = Static.serve_with_prefix(asset_root() ++ "/assets", "/assets")
+
+  let router =
+    Router.new()
+    |> Router.fallback(fn conn -> fn _ ->
+      conn |> HttpServer.text(404, "Not Found")
+    )
+    |> Router.get("/", fn conn ->
+      conn |> HttpServer.html(200, Page.ui_html(display_title, port, is_temp))
+    )
+    |> Router.get("/ws", fn conn ->
+      ws_handler(nb_path, march_bin, port, conn)
+    )
+
+  let pipeline = fn conn ->
+    Middleware.pipeline([
+      Middleware.logger,
+      security_headers,
+      static_plug,
+      Router.to_plug(router)
+    ], conn)
+
+  -- We drive HttpServer directly rather than BastionServer.start_plug because
+  -- BastionServer.dispatch_hook references Session.commit_from_conn and
+  -- Depot.Middleware which do not exist in scroll's dep tree.  After-send
+  -- hooks are never registered here (no sessions, no DB pool), so nothing
+  -- is lost by bypassing BastionServer.
+  HttpServer.new(port)
+  |> HttpServer.plug(pipeline)
+  |> HttpServer.listen()
 end
 
 end

@@ -74,4 +74,26 @@ fn stop_run_proc(nb_path, conn_id) do
   Runtime.stop_runtime(session_id(nb_path, conn_id))
 end
 
+-- Pre-issue a :reset so it runs during user think time before the next run.
+-- Note: Runtime.preload_reset is a no-op (O(1) reset via snapshot means we
+-- no longer need to pre-warm the REPL).  We avoid the cross-module call here
+-- because Runtime.* calls from processes.march crash the interpreter
+-- (March compiler bug with cross-module fn dispatch).
+fn preload_reset_proc(nb_path, conn_id) do
+  let _ = nb_path
+  let _ = conn_id
+  ()
+end
+
+-- Eagerly spawn the REPL when the notebook loads so the first cell run
+-- doesn't pay the REPL startup cost.  Uses empty env; the REPL is respawned
+-- on first run only if the user has custom env vars (same cost as before).
+-- Note: we do NOT call Runtime.preload_reset here — Runtime.* calls from
+-- processes.march hang the interpreter (cross-module dispatch bug).
+fn warm_start_proc(nb_path, conn_id, march_bin) do
+  let sid = session_id(nb_path, conn_id)
+  let _ = Runtime.start_runtime(sid, march_bin, "")
+  ()
+end
+
 end

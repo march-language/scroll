@@ -69,6 +69,7 @@ mod Session do
         Ok(content) -> do
           let cells = parse_cells(content)
           WebSocket.send_frame(socket, TextFrame(notebook_msg(content, cells)))
+          Processes.warm_start_proc(nb_path, conn_id, march_bin)
         end
         end
         nb_path
