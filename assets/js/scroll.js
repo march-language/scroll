@@ -219,14 +219,19 @@ function handleMsg(msg) {
 
 function startRunPoll(idx) {
   stopRunPoll(idx);
-  runPolls[idx] = setInterval(() => {
+  let delay = 50;
+  function tick() {
+    if (!runPolls[idx]) return;
     send({type:"poll_run", index:idx});
-  }, 300);
+    delay = Math.min(Math.ceil(delay * 1.5), 300);
+    runPolls[idx] = setTimeout(tick, delay);
+  }
+  runPolls[idx] = setTimeout(tick, delay);
 }
 
 function stopRunPoll(idx) {
   if (runPolls[idx]) {
-    clearInterval(runPolls[idx]);
+    clearTimeout(runPolls[idx]);
     delete runPolls[idx];
   }
 }
@@ -609,18 +614,14 @@ function deleteCell(idx) {
     if (pendingRun === idx) pendingRun = null;
     else if (pendingRun > idx) pendingRun--;
   }
-  // runPolls: stop old intervals; restart with shifted keys for indices > idx
-  const shiftedPolls = {};
+  // runPolls: stop old timers; restart with shifted keys for indices > idx
+  const toRestart = [];
   Object.keys(runPolls).forEach(k => {
     const i = Number(k);
-    clearInterval(runPolls[i]);
-    if (i !== idx) {
-      const newIdx = i > idx ? i - 1 : i;
-      shiftedPolls[newIdx] = setInterval(() => { send({type:"poll_run", index:newIdx}); }, 300);
-    }
+    if (i !== idx) toRestart.push(i > idx ? i - 1 : i);
   });
-  Object.keys(runPolls).forEach(k => delete runPolls[k]);
-  Object.assign(runPolls, shiftedPolls);
+  Object.keys(runPolls).forEach(k => stopRunPoll(Number(k)));
+  toRestart.forEach(newIdx => startRunPoll(newIdx));
   // cmdSelected
   if (cmdSelected !== null) {
     if (cmdSelected > idx) cmdSelected--;
@@ -1568,4 +1569,7 @@ window.runCell = runCell;
 window.addCell = addCell;
 window.cmdSelect = cmdSelect;
 
-connect();
+// Defer WebSocket connection until DOMContentLoaded so module scripts
+// (editor.js) can be served by the single-threaded march HTTP server
+// before it enters the blocking WebSocket recv() loop.
+document.addEventListener('DOMContentLoaded', function() { connect(); });

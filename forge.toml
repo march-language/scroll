@@ -6,6 +6,7 @@ description = "Interactive notebook for March — Livebook-style in the browser"
 author = ""
 
 [deps]
+bastion = { path = "/Users/80197052/code/bastion" }
 
 [archive]
 
