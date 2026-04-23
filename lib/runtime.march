@@ -72,6 +72,12 @@ pfn rt_env_key(sid)      do sid ++ ":env" end
 pfn rt_cell_state_key(sid) do sid ++ ":cell_state" end
 pfn rt_out_start_key(sid)  do sid ++ ":out_start" end
 pfn rt_err_start_key(sid)  do sid ++ ":err_start" end
+-- Keys for the Vault-based result store (used by poll_result_ready / poll_read_*).
+-- The new JIT binary has a bug marshalling complex ADT return values across
+-- module boundaries (Option<(String, List, Option)> hangs; Option<String> works).
+-- Workaround: store results in Vault as plain strings and return a simple Bool.
+pfn rt_result_stdout_key(sid) do sid ++ ":result_stdout" end
+pfn rt_result_stderr_key(sid) do sid ++ ":result_stderr" end
 
 -- Replace path separators so the session ID can be used as a filename.
 pfn sanitize_sid(sid)    do String.replace_all(sid, "/", "_") end
@@ -218,6 +224,7 @@ fn start_runtime(session_id, march_bin, env_str) do
   -- We use `export` before `exec` because exec in POSIX sh does not accept
   -- inline KEY=val assignments the way a normal command invocation does.
   let shell = ep ++ "export MARCH_SCROLL_MODE=1; " ++
+              "export MARCH_JIT_BACKEND=orc; " ++
               "export MARCH_SCROLL_SENTINEL=" ++ sh_quote(sentinel_token) ++ "; exec " ++
               sh_quote(march_bin) ++ " repl >" ++ outp ++ " 2>" ++ errp
 
@@ -250,6 +257,8 @@ fn stop_runtime(session_id) do
   let _ = Vault.ns_drop(rt_ns(), rt_cell_state_key(session_id))
   let _ = Vault.ns_drop(rt_ns(), rt_out_start_key(session_id))
   let _ = Vault.ns_drop(rt_ns(), rt_err_start_key(session_id))
+  let _ = Vault.ns_drop(rt_ns(), rt_result_stdout_key(session_id))
+  let _ = Vault.ns_drop(rt_ns(), rt_result_stderr_key(session_id))
   let _ = File.delete(rt_out_path(session_id))
   let _ = File.delete(rt_err_path(session_id))
   ()
@@ -473,14 +482,24 @@ end
 --
 -- skip = M.  The target cell output lies between sentinel (M-1) and sentinel M.
 -- We locate the end of sentinel (skip-1), then find the next sentinel from there.
-fn poll_result(session_id) do
+-- poll_result_ready: check if the target cell is done and store result in Vault.
+-- Returns false if still running; true if done (result stored in Vault).
+-- Uses Vault instead of function return values to avoid the JIT cross-module bug
+-- with complex ADT return types (Option<(String, List, Option)> hangs cross-module).
+-- Session.march reads the stored result via poll_read_stdout / poll_read_stderr.
+fn poll_result_ready(session_id) do
   match Vault.ns_get(rt_ns(), rt_skip_key(session_id)) do
-    None -> Some(("", Nil, Some("no active run for this session")))
+    None -> do
+      -- No active run — store an error result and report done.
+      let _ = Vault.ns_set(rt_ns(), rt_result_stdout_key(session_id), "")
+      let _ = Vault.ns_set(rt_ns(), rt_result_stderr_key(session_id), "no active run for this session")
+      true
+    end
     Some(skip_s) ->
       let skip = match String.to_int(skip_s) do Ok(n) -> n | Err(_) -> 0 end
       let outp = rt_out_path(session_id)
       match File.read(outp) do
-        Err(_) -> None
+        Err(_) -> false
         Ok(raw_content) ->
           let file_start = match Vault.ns_get(rt_ns(), rt_out_start_key(session_id)) do
             Some(s) -> match String.to_int(s) do Ok(n) -> n | Err(_) -> 0 end
@@ -488,41 +507,30 @@ fn poll_result(session_id) do
           end
           let content = String.slice(raw_content, file_start,
                                      String.byte_size(raw_content) - file_start)
-          -- Locate the start of the target cell's output.
-          -- It begins immediately after sentinel (skip-1).
-          -- Special case: skip=0 means no prefix sentinels (output starts at byte 0).
           let cell_out_start_opt =
             if skip == 0 do
               Some(0)
             else
               match find_sentinel_n(content, skip - 1, session_id) do
-                None -> None  -- context cells still running
+                None -> None
                 Some((_, after_prev_sentinel)) -> Some(after_prev_sentinel)
               end
             end
           match cell_out_start_opt do
-            None -> None  -- still waiting for context cells to finish
+            None -> false
             Some(out_start) ->
               let remaining = String.slice(content, out_start,
                                           String.byte_size(content) - out_start)
-              -- Find the first sentinel in the remaining content — that marks
-              -- the END of the target cell's output.
               match find_sentinel_n(remaining, 0, session_id) do
-                None -> None  -- target cell still running
+                None -> false
                 Some((cell_out_end, _)) ->
                   let raw_out = String.slice(remaining, 0, cell_out_end)
-                  -- Drop trailing newline that println emits before the sentinel.
                   let out = if String.ends_with(raw_out, "\n") do
                     String.slice(raw_out, 0, String.byte_size(raw_out) - 1)
                   else raw_out
                   end
-                  -- Strip blob sentinels from the raw output.
-                  let (clean_out, blobs) = BlobParser.parse(out)
-                  -- Strip REPL noise: prompts like "march(2)> " and unit
-                  -- return values "= ()" that are never meaningful to users.
-                  let clean_out = strip_repl_noise(clean_out)
-                  -- Surface stderr, but drop [timing] lines — they appear in
-                  -- every REPL invocation and add no diagnostic value.
+                  let clean_out = strip_repl_noise(out)
+                  -- Surface stderr, filtering timing lines.
                   let errp = rt_err_path(session_id)
                   let err_start = match Vault.ns_get(rt_ns(), rt_err_start_key(session_id)) do
                     Some(s) -> match String.to_int(s) do Ok(n) -> n | Err(_) -> 0 end
@@ -533,23 +541,38 @@ fn poll_result(session_id) do
                     Err(_) -> ""
                   end
                   let err_raw = filter_timing(err_raw)
-                  let combined =
-                    if String.is_empty(err_raw) do clean_out
-                    else
-                      let sep = if String.is_empty(clean_out) do "" else "\n" end
-                      clean_out ++ sep ++ "[stderr]\n" ++ err_raw
-                    end
-                  -- Cap at 64 KB to match the subprocess model.
-                  let combined =
-                    if String.byte_size(combined) > 65536 do
-                      String.slice(combined, 0, 65536) ++ "\n[output truncated at 64 KB]"
-                    else combined
-                    end
-                  Some((combined, blobs, None))
+                  -- Store results in Vault for session.march to read.
+                  let _ = Vault.ns_set(rt_ns(), rt_result_stdout_key(session_id), clean_out)
+                  let _ = Vault.ns_set(rt_ns(), rt_result_stderr_key(session_id), err_raw)
+                  true
               end
           end
       end
   end
+end
+
+-- Read the stored stdout after poll_result_ready returned true.
+-- Returns empty string if no result is stored (shouldn't happen in normal flow).
+fn poll_read_stdout(session_id) do
+  match Vault.ns_get(rt_ns(), rt_result_stdout_key(session_id)) do
+    Some(s) -> s
+    None    -> ""
+  end
+end
+
+-- Read the stored stderr after poll_result_ready returned true.
+fn poll_read_stderr(session_id) do
+  match Vault.ns_get(rt_ns(), rt_result_stderr_key(session_id)) do
+    Some(s) -> s
+    None    -> ""
+  end
+end
+
+-- Legacy wrapper kept for API compatibility.  Session.march now uses
+-- poll_result_ready / poll_read_stdout / poll_read_stderr directly.
+fn poll_result(session_id) do
+  let _ = session_id
+  None
 end
 
 -- Return whatever the target cell has printed so far, even before it finishes.

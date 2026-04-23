@@ -1,98 +1,76 @@
--- processes.march — Background process management for code cells.
+-- processes.march — Background process management stubs (API compatibility).
 --
--- Code-cell execution now uses a persistent March REPL per notebook session
--- (managed by Runtime) rather than spawning a fresh OS process per cell.
--- This gives cells access to the full March actor model: long-lived processes
--- spawned in one cell remain alive across subsequent cell runs.
+-- The actual REPL lifecycle management (start/poll/stop) has been moved to
+-- session.march, which calls Runtime.* directly.  This module is kept as a
+-- stub so scroll.march's public API delegation wrappers continue to compile.
 --
--- Each WebSocket connection gets its own REPL via a unique connection ID.
--- This prevents two browser tabs open to the same notebook from sharing a
--- single REPL, which would corrupt both sessions when either tab runs a cell.
+-- IMPORTANT: Do NOT add Runtime.* or Runner.* calls here.  Cross-module
+-- dispatch from processes.march into Runtime.* crashes the March interpreter
+-- with the new JIT binary (see memory/feedback_march_crossmodule_bug.md).
 --
 -- Public API (fn):
---   start_run_proc/6 : start (or reuse) the runtime and feed cells to it
---   check_run_proc/3 : poll — None = still running, Some(...) = done
---   live_run_proc/2  : poll intermediate output
---   stop_run_proc/2  : kill the runtime for this connection
+--   start_run_proc/6 : stub — returns error (logic moved to session.march)
+--   check_run_proc/3 : stub — returns None
+--   live_run_proc/2  : stub — returns None
+--   stop_run_proc/2  : stub — no-op (logic moved to session.march)
 
 mod Processes do
 
 import Cells
 
--- Session ID: combines the notebook path and the per-WebSocket connection ID
--- so each browser tab gets its own isolated REPL process.
+-- Session ID: combines the notebook path and the per-WebSocket connection ID.
+-- Kept here for API compatibility with scroll.march's delegation wrapper.
 pfn session_id(nb_path, conn_id) do nb_path ++ ":" ++ conn_id end
 
--- Spawn (or reuse) the persistent REPL, then feed all code cells 0..run_through_idx.
--- Returns Ok(session_id) on success, Err(msg) on failure.
+-- These stubs are exposed via scroll.march's delegation layer (Scroll.*)
+-- for use by the test suite.  Session.march calls Runtime directly.
+
+-- No longer used by session.march; stub returns Err so tests that call
+-- Scroll.start_run_proc see a clear message rather than a crash.
 fn start_run_proc(cells, run_through_idx, march_bin, env_str, nb_path, conn_id) do
-  -- Guard: the target cell must be a Code cell.
-  -- Note: avoid calling Runner.find_code_idx here — cross-module ADT pattern
-  -- matching crashes the interpreter (March compiler bug with fn calls across
-  -- modules when the argument contains ADT variants from a third module).
-  -- The target_is_code check below subsumes the cidx < 0 guard.
-  let target_is_code = match Cells.nth_cell(cells, run_through_idx) do
-    Some(Code(_)) -> true
-    _ -> false
-  end
-  if not(target_is_code) do
-    Err("cell " ++ String.from_int(run_through_idx) ++ " is not a code cell")
-  else
-  let sid = session_id(nb_path, conn_id)
-  -- Kill any existing REPL and start fresh so the new env_str takes effect
-  -- and state from previous runs does not leak into this one.
-  match Runtime.start_runtime(sid, march_bin, env_str) do
-    Err(msg) -> Err(msg)
-    Ok(proc) ->
-      match Runtime.write_cells(sid, proc, cells, run_through_idx) do
-        Err(msg) -> Err(msg)
-        Ok(_skip) -> Ok(sid)
-      end
-  end
-  end  -- end if not(target_is_code)
+  let _ = cells
+  let _ = run_through_idx
+  let _ = march_bin
+  let _ = env_str
+  let _ = nb_path
+  let _ = conn_id
+  Err("start_run_proc: use Runtime directly from session.march")
 end
 
--- Poll for the target cell's result.
--- Returns None while still running, Some((output, blobs, err_opt)) when done.
--- Variable extraction (Runner.extract_vars) is intentionally left to the
--- caller in session.march — direct Runner.* calls from processes.march crash
--- the interpreter (March compiler bug with cross-module fn dispatch).
+-- No longer used by session.march; stub returns None.
 fn check_run_proc(run_through_idx, nb_path, conn_id) do
-  let _ = run_through_idx  -- index not needed; the runtime tracks position
-  let sid = session_id(nb_path, conn_id)
-  Runtime.poll_result(sid)
+  let _ = run_through_idx
+  let _ = nb_path
+  let _ = conn_id
+  None
 end
 
--- Poll for live/intermediate output of the currently running cell.
--- Returns None if context cells haven't finished, Some(partial_output) otherwise.
+-- No longer used by session.march; stub returns None.
 fn live_run_proc(nb_path, conn_id) do
-  Runtime.poll_live(session_id(nb_path, conn_id))
+  let _ = nb_path
+  let _ = conn_id
+  None
 end
 
--- Kill the REPL for this connection.
+-- No longer used by session.march; stub is a no-op.
 fn stop_run_proc(nb_path, conn_id) do
-  Runtime.stop_runtime(session_id(nb_path, conn_id))
+  let _ = nb_path
+  let _ = conn_id
+  ()
 end
 
--- Pre-issue a :reset so it runs during user think time before the next run.
--- Note: Runtime.preload_reset is a no-op (O(1) reset via snapshot means we
--- no longer need to pre-warm the REPL).  We avoid the cross-module call here
--- because Runtime.* calls from processes.march crash the interpreter
--- (March compiler bug with cross-module fn dispatch).
+-- No longer used by session.march; stub is a no-op.
 fn preload_reset_proc(nb_path, conn_id) do
   let _ = nb_path
   let _ = conn_id
   ()
 end
 
--- Eagerly spawn the REPL when the notebook loads so the first cell run
--- doesn't pay the REPL startup cost.  Uses empty env; the REPL is respawned
--- on first run only if the user has custom env vars (same cost as before).
--- Note: we do NOT call Runtime.preload_reset here — Runtime.* calls from
--- processes.march hang the interpreter (cross-module dispatch bug).
+-- No longer used by session.march; stub is a no-op.
 fn warm_start_proc(nb_path, conn_id, march_bin) do
-  let sid = session_id(nb_path, conn_id)
-  let _ = Runtime.start_runtime(sid, march_bin, "")
+  let _ = nb_path
+  let _ = conn_id
+  let _ = march_bin
   ()
 end
 
