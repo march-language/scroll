@@ -9,6 +9,7 @@
 -- with a download link as fallback.
 
 mod ScrollPdf do
+  needs IO.Console
 
 doc "Build the raw sentinel string for a PDF blob (for testing / composing)."
 fn make_sentinel(b64 : String) : String do

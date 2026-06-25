@@ -316,33 +316,48 @@ fn generate_runner(cells, run_through_idx) do
     )
   end
 
-  -- go returns (nested_mod_chunks, main_body_chunks, bound_names_rev), all in reverse.
-  fn go(cells, mod_rev, body_rev, names_rev, code_n, total_n) do
+  -- partition_cells accumulates (nested_mod_chunks, main_body_chunks, bound_names_rev).
+  -- ns = (code_n, total_n) packed to stay within the nested-fn parameter limit.
+  fn partition_cells(cells, mod_rev, body_rev, ns) do
+    let (code_n, total_n) = ns
     if total_n > run_through_idx do
-      (List.reverse(mod_rev), List.reverse(body_rev), List.reverse(names_rev))
+      (List.reverse(mod_rev), List.reverse(body_rev))
     else
       match cells do
-        Nil -> (List.reverse(mod_rev), List.reverse(body_rev), List.reverse(names_rev))
-        Cons(Markdown(_), rest) -> go(rest, mod_rev, body_rev, names_rev, code_n, total_n + 1)
-        Cons(Section(_), rest)  -> go(rest, mod_rev, body_rev, names_rev, code_n, total_n + 1)
+        Nil -> (List.reverse(mod_rev), List.reverse(body_rev))
+        Cons(Markdown(_), rest) -> partition_cells(rest, mod_rev, body_rev, (code_n, total_n + 1))
+        Cons(Section(_), rest)  -> partition_cells(rest, mod_rev, body_rev, (code_n, total_n + 1))
         Cons(Code(src), rest) ->
           if is_mod_cell(src) do
             let (mod_code, main_code) = make_mod_cell(src, code_n)
-            go(rest,
+            partition_cells(rest,
               Cons(mod_code, mod_rev),
               Cons(main_code, body_rev),
-              names_rev,
-              code_n + 1,
-              total_n + 1)
+              (code_n + 1, total_n + 1))
           else
-            let new_names = collect_bound_names(src)
-            let names_rev = List.append(new_names, names_rev)
-            go(rest,
+            partition_cells(rest,
               mod_rev,
               Cons(make_cell_inline(src, code_n), body_rev),
-              names_rev,
-              code_n + 1,
-              total_n + 1)
+              (code_n + 1, total_n + 1))
+          end
+      end
+    end
+  end
+
+  -- Collect bound names from all code cells up to run_through_idx.
+  fn collect_all_names(cells, acc, total_n) do
+    if total_n > run_through_idx do List.reverse(acc)
+    else
+      match cells do
+        Nil -> List.reverse(acc)
+        Cons(Markdown(_), rest) -> collect_all_names(rest, acc, total_n + 1)
+        Cons(Section(_), rest)  -> collect_all_names(rest, acc, total_n + 1)
+        Cons(Code(src), rest) ->
+          if is_mod_cell(src) do
+            collect_all_names(rest, acc, total_n + 1)
+          else
+            let new_names = collect_bound_names(src)
+            collect_all_names(rest, List.append(new_names, acc), total_n + 1)
           end
       end
     end
@@ -366,7 +381,8 @@ fn generate_runner(cells, run_through_idx) do
     end
   end
 
-  let (mod_chunks, body_chunks, bound_names) = go(cells, Nil, Nil, Nil, 0, 0)
+  let (mod_chunks, body_chunks) = partition_cells(cells, Nil, Nil, (0, 0))
+  let bound_names = collect_all_names(cells, Nil, 0)
   let mod_str  = String.join(mod_chunks, "")
   let body     = String.join(body_chunks, "")
   let body     = if String.is_empty(body) do "  ()\n" else body end

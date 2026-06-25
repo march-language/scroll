@@ -9,6 +9,7 @@
 -- The browser renders the blob as `<video controls src="data:<mime>;base64,<b64>">`.
 
 mod ScrollVideo do
+  needs IO.Console
 
 doc "Build the raw sentinel string for a video blob (for testing / composing)."
 fn make_sentinel(mime : String, b64 : String) : String do

@@ -10,6 +10,7 @@
 -- The browser renders the blob as `<audio controls src="data:<mime>;base64,<b64>">`.
 
 mod ScrollAudio do
+  needs IO.Console
 
 doc "Build the raw sentinel string for an audio blob (for testing / composing)."
 fn make_sentinel(mime : String, b64 : String) : String do

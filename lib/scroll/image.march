@@ -22,6 +22,7 @@
 --   - No validation of base64 content — callers are responsible for encoding.
 
 mod ScrollImage do
+  needs IO.Console
 
 doc "Build the raw sentinel string for an image blob (for testing / composing)."
 fn make_sentinel(mime : String, b64 : String) : String do
