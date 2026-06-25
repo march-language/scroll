@@ -40,6 +40,9 @@ mod Page do
       "<meta charset=\"UTF-8\">\n" ++
       "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n" ++
       "<title>March Notebook — " ++ safe_path ++ "</title>\n" ++
+      "<link rel=\"preconnect\" href=\"https://fonts.googleapis.com\">\n" ++
+      "<link rel=\"preconnect\" href=\"https://fonts.gstatic.com\" crossorigin>\n" ++
+      "<link href=\"https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,500;0,600;1,400&family=JetBrains+Mono:wght@400;500&display=swap\" rel=\"stylesheet\">\n" ++
       "<link rel=\"stylesheet\" href=\"/assets/css/scroll.css?v=" ++ String.from_int(System.pid()) ++ "\">\n" ++
       "<script src=\"/assets/js/purify.min.js\"></script>\n" ++
       "<script type=\"importmap\">{\"imports\":{\"@codemirror/state\":\"https://esm.sh/@codemirror/state@6\",\"@codemirror/view\":\"https://esm.sh/@codemirror/view@6\",\"@codemirror/language\":\"https://esm.sh/@codemirror/language@6\",\"@codemirror/commands\":\"https://esm.sh/@codemirror/commands@6\",\"@lezer/highlight\":\"https://esm.sh/@lezer/highlight@1\"}}</script>\n" ++

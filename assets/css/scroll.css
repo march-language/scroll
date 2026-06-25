@@ -1,8 +1,8 @@
 /* ── March Design System ─────────────────────────── */
-:root{--bg:#09090b;--sb:#0f0f12;--card:#141418;--bdr:#23252b;--code:#0c0c0f;--code-text:#e8edf3;--code-dim:#a1a1aa;--text:#d4d4d8;--dim:#71717a;--bright:#fafafa;--acc:#6FE3D6;--acc2:#3ABFF8;--fn:#36D399;--ty:#FBBF24;--if:#3ABFF8;--prv:#3f3f46}
-[data-theme="light"]{--bg:#ffffff;--sb:#f4f9fb;--card:#ffffff;--bdr:#d0e3eb;--code:#f1f5f9;--code-text:#1e293b;--code-dim:#475569;--text:#0B1F2A;--dim:#4a6d7a;--bright:#0B1F2A;--acc:#0d9e8f;--acc2:#0284c7;--fn:#047857;--ty:#b45309;--if:#0284c7;--prv:#8b9da7}
+:root{--bg:#07101a;--sb:#060d16;--card:#0c1928;--bdr:#0f2438;--code:#0c1928;--code-text:#cce5f5;--code-dim:#4a7898;--text:#cce5f5;--dim:#4a7898;--bright:#e8f4ff;--acc:oklch(63% 0.12 207);--acc2:oklch(74% 0.11 200);--fn:oklch(82% 0.11 200);--ty:oklch(82% 0.12 70);--if:oklch(74% 0.11 200);--prv:#1e4060}
+[data-theme="light"]{--bg:#f0f6fc;--sb:#e6f0f8;--card:#ddeaf5;--bdr:#b5cce0;--code:#ddeaf5;--code-text:#071828;--code-dim:#2e5c7c;--text:#071828;--dim:#2e5c7c;--bright:#071828;--acc:oklch(37% 0.11 210);--acc2:oklch(32% 0.11 215);--fn:oklch(28% 0.11 215);--ty:oklch(42% 0.12 55);--if:oklch(32% 0.11 215);--prv:#6a96b5}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;font-size:15px;line-height:1.6}
+body{font-family:system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--text);height:100vh;display:flex;flex-direction:column;font-size:15px;line-height:1.6;-webkit-font-smoothing:antialiased}
 #toolbar{background:var(--sb);border-bottom:1px solid var(--bdr);padding:8px 24px;display:flex;align-items:center;gap:10px;flex-shrink:0;height:48px}
 #toolbar h1{font-size:14px;font-weight:700;color:var(--bright);margin-right:auto;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;letter-spacing:.01em}
 .btn{padding:5px 13px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:500;transition:all .15s}
@@ -32,18 +32,18 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif;
 .cell-md-label{font-size:10px;font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;color:var(--dim);flex:1;text-transform:uppercase;letter-spacing:.08em}
 .cell-md-actions{display:flex;gap:3px}
 .cell-md{padding:6px 16px 10px}
-.cell-md h1{font-size:1.6rem;margin:18px 0 10px;font-weight:700;color:var(--bright);line-height:1.25}
-.cell-md h2{font-size:.85rem;margin:16px 0 7px;font-weight:600;color:var(--bright);text-transform:uppercase;letter-spacing:.04em;border-bottom:1px solid var(--bdr);padding-bottom:6px}
-.cell-md h3{font-size:16px;margin:12px 0 5px;font-weight:600;color:var(--acc)}
-.cell-md p{margin:7px 0;color:var(--text);line-height:1.7}
-.cell-md ul,.cell-md ol{margin:7px 0 7px 24px;color:var(--text)}
-.cell-md li{margin:3px 0;line-height:1.65}
-.cell-md code{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;font-size:12px;background:var(--code);padding:2px 6px;border-radius:4px;color:var(--acc)}
-.cell-md hr{border:none;border-top:1px solid var(--bdr);margin:16px 0}
-.cell-md em{font-style:italic;color:var(--dim)}
+.cell-md h1{font-family:'Lora',Georgia,serif;font-size:28px;font-weight:600;letter-spacing:-0.02em;color:var(--bright);margin:18px 0 12px;line-height:1.2}
+.cell-md h2{font-family:'Lora',Georgia,serif;font-size:21px;font-weight:600;color:var(--bright);margin:28px 0 10px;letter-spacing:-0.01em;border-bottom:1px solid var(--bdr);padding-bottom:7px;line-height:1.3}
+.cell-md h3{font-size:16px;font-weight:600;color:var(--text);margin:18px 0 7px;letter-spacing:-0.005em}
+.cell-md p{margin:8px 0;color:var(--text);line-height:1.82;font-size:15px}
+.cell-md ul,.cell-md ol{margin:8px 0 8px 22px;color:var(--text)}
+.cell-md li{margin:3px 0;line-height:1.8;font-size:15px}
+.cell-md code{font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;font-size:0.875em;background:var(--card);padding:2px 7px;border-radius:4px;color:var(--acc)}
+.cell-md hr{border:none;border-top:1px solid var(--bdr);margin:28px 0}
+.cell-md em{font-style:italic}
 .cell-md strong{font-weight:600;color:var(--bright)}
 .cell-md a{color:var(--acc);text-decoration:none}
-.cell-md a:hover{color:var(--acc2);text-decoration:underline}
+.cell-md a:hover{text-decoration:underline}
 .cell-md-editor{border-top:1px solid var(--bdr);margin-top:4px}
 .cell-md-editor textarea{display:block;width:100%;background:transparent;color:var(--text);border:none;resize:none;outline:none;padding:10px 16px;font-family:inherit;font-size:13px;line-height:1.7;overflow:hidden}
 
@@ -239,11 +239,11 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif;
 #overflow-menu button{display:block;width:100%;text-align:left;padding:6px 12px;border-radius:5px;border:none;background:transparent;color:var(--text);font-size:12px;cursor:pointer;white-space:nowrap;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
 #overflow-menu button:hover{background:var(--card);color:var(--bright)}
 /* ── Markdown fenced code blocks ────────────────── */
-.cell-md-fence{position:relative;margin:7px 0;border-radius:6px;overflow:hidden;background:var(--code);border-left:2px solid var(--acc)}
-.cell-md-fence pre{margin:0;padding:10px 14px;font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;font-size:12px;line-height:1.65;color:var(--code-text);white-space:pre;overflow-x:auto}
+.cell-md-fence{position:relative;margin:14px 0;border-radius:6px;overflow:hidden;background:var(--card);border:1px solid var(--bdr)}
+.cell-md-fence pre{margin:0;padding:16px 20px;font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;font-size:13px;line-height:1.72;color:var(--code-text);white-space:pre;overflow-x:auto}
 .cell-md-fence code{font-family:inherit;font-size:inherit;background:none;padding:0;color:inherit;border-radius:0}
-.cell-md-fence-lang{position:absolute;top:5px;right:8px;font-size:9px;color:var(--fn);font-family:'JetBrains Mono',monospace;font-weight:600;letter-spacing:.06em;text-transform:uppercase;pointer-events:none}
+.cell-md-fence-lang{position:absolute;top:6px;right:10px;font-size:9px;color:var(--dim);font-family:'JetBrains Mono',monospace;font-weight:600;letter-spacing:.06em;text-transform:uppercase;pointer-events:none}
 /* ── Markdown blockquotes + ordered lists ────────── */
-.cell-md blockquote{border-left:3px solid var(--acc2);padding:4px 10px;margin:6px 0;background:color-mix(in srgb,var(--acc2) 5%,transparent);border-radius:0 4px 4px 0}
-.cell-md blockquote p{color:var(--dim);margin:2px 0;font-size:13px}
-.cell-md ol{margin:7px 0 7px 24px;color:var(--text)}
+.cell-md blockquote{border-left:3px solid var(--acc);padding:12px 16px;margin:12px 0;background:var(--card);border-radius:0 6px 6px 0;font-size:14px;line-height:1.75;color:var(--dim)}
+.cell-md blockquote p{color:var(--dim);margin:2px 0;font-size:14px}
+.cell-md ol{margin:8px 0 8px 22px;color:var(--text)}
