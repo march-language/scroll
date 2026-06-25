@@ -182,7 +182,7 @@ mod Session do
         match (path_opt, content_opt) do
         (None, _) -> do WebSocket.send_frame(socket, err_frame("missing path")) nb_path end
         (_, None) -> do WebSocket.send_frame(socket, err_frame("missing content")) nb_path end
-        (Some(new_path), Some("")) -> do WebSocket.send_frame(socket, err_frame("missing content")) nb_path end
+        (_, Some("")) -> do WebSocket.send_frame(socket, err_frame("missing content")) nb_path end
         (Some(new_path), Some(content)) -> do
           if String.byte_size(content) > 50000000 do
             WebSocket.send_frame(socket, err_frame("notebook too large (> 50 MB)"))
