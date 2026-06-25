@@ -23,6 +23,14 @@ let NB_PATH = document.body.dataset.nbPath;
 const WS_URL  = "ws://" + location.hostname + ":" + document.body.dataset.wsPort + "/ws";
 let IS_TEMP = !!document.body.dataset.isTemp;
 
+// Show just the filename stem in the title bar (strip path + .scrollmd ext).
+(function() {
+  var stem = (NB_PATH || "").split("/").pop().replace(/\.scrollmd$/, "") || NB_PATH;
+  var el = document.getElementById("nb-title");
+  if (el) el.textContent = stem;
+  document.title = "March Notebook — " + stem;
+})();
+
 let cells = [];   // [{kind, source, output, error, running}]
 let ws = null;
 
@@ -699,39 +707,70 @@ function attachDragEvents(wrap, idx) {
 function renderMd(src) {
   let html = "";
   const lines = src.split("\n");
-  let inUl = false, inP = false;
+  let inUl = false, inOl = false, inP = false, inBq = false;
+  let inFence = false, fenceLang = "", fenceLines = [];
+
+  function flushFence() {
+    const body = fenceLines.join("\n").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+    const langLabel = fenceLang ? `<span class="cell-md-fence-lang">${esc(fenceLang)}</span>` : "";
+    html += `<div class="cell-md-fence">${langLabel}<pre><code>${body}</code></pre></div>`;
+    fenceLines = []; fenceLang = "";
+  }
+  function closeBlocks() {
+    if (inUl) { html += "</ul>";         inUl = false; }
+    if (inOl) { html += "</ol>";         inOl = false; }
+    if (inP)  { html += "</p>";          inP  = false; }
+    if (inBq) { html += "</blockquote>"; inBq = false; }
+  }
+
   for (const line of lines) {
     const t = line.trim();
-    if (!t) {
-      if (inUl) { html += "</ul>"; inUl = false; }
-      if (inP)  { html += "</p>";  inP  = false; }
+    if (t.startsWith("```")) {
+      if (!inFence) { closeBlocks(); inFence = true; fenceLang = t.slice(3).trim(); }
+      else          { inFence = false; flushFence(); }
       continue;
     }
-    if (t === "---" || t === "***") {
-      if (inUl) { html += "</ul>"; inUl = false; }
-      if (inP)  { html += "</p>";  inP  = false; }
-      html += "<hr>"; continue;
-    }
+    if (inFence) { fenceLines.push(line); continue; }
+    if (!t) { closeBlocks(); continue; }
+    if (t === "---" || t === "***") { closeBlocks(); html += "<hr>"; continue; }
     const hm = t.match(/^(#{1,3})\s+(.+)/);
     if (hm) {
-      if (inUl) { html += "</ul>"; inUl = false; }
-      if (inP)  { html += "</p>";  inP  = false; }
-      const lvl = hm[1].length;
-      html += `<h${lvl}>${inline(hm[2])}</h${lvl}>`;
+      closeBlocks();
+      html += `<h${hm[1].length}>${inline(hm[2])}</h${hm[1].length}>`;
       continue;
     }
+    if (t === ">" || t.startsWith("> ")) {
+      if (inUl) { html += "</ul>"; inUl = false; }
+      if (inOl) { html += "</ol>"; inOl = false; }
+      if (inP)  { html += "</p>";  inP  = false; }
+      if (!inBq){ html += "<blockquote>"; inBq = true; }
+      if (t !== ">") html += `<p>${inline(t.slice(2))}</p>`;
+      continue;
+    }
+    if (inBq) { html += "</blockquote>"; inBq = false; }
     if (t.startsWith("- ") || t.startsWith("* ")) {
       if (inP)  { html += "</p>";  inP  = false; }
+      if (inOl) { html += "</ol>"; inOl = false; }
       if (!inUl){ html += "<ul>";  inUl = true;  }
-      html += `<li>${inline(t.slice(2))}</li>`;
-      continue;
+      html += `<li>${inline(t.slice(2))}</li>`; continue;
     }
     if (inUl) { html += "</ul>"; inUl = false; }
+    const olm = t.match(/^\d+\.\s+(.+)/);
+    if (olm) {
+      if (inP)  { html += "</p>";  inP  = false; }
+      if (inUl) { html += "</ul>"; inUl = false; }
+      if (!inOl){ html += "<ol>";  inOl = true;  }
+      html += `<li>${inline(olm[1])}</li>`; continue;
+    }
+    if (inOl) { html += "</ol>"; inOl = false; }
     if (!inP) { html += "<p>"; inP = true; } else { html += " "; }
     html += inline(t);
   }
+  if (inFence) flushFence();
   if (inUl) html += "</ul>";
+  if (inOl) html += "</ol>";
   if (inP)  html += "</p>";
+  if (inBq) html += "</blockquote>";
   return html;
 }
 
@@ -740,6 +779,7 @@ function inline(s) {
   s = s.replace(/`([^`]+)`/g, "<code>$1</code>");
   s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
   s = s.replace(/\*([^*]+)\*/g, "<em>$1</em>");
+  s = s.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
   return s;
 }
 
@@ -1306,7 +1346,23 @@ document.getElementById("btn-log").onclick = () => {
   const panel = document.getElementById("log-panel");
   if (panel.style.display === "none") openLogPanel();
   else closeLogPanel();
+  document.getElementById("overflow-menu").style.display = "none";
 };
+
+// Overflow menu (Export HTML + Log)
+(function() {
+  const btn  = document.getElementById("btn-overflow");
+  const menu = document.getElementById("overflow-menu");
+  if (!btn || !menu) return;
+  btn.onclick = (e) => {
+    e.stopPropagation();
+    const open = menu.style.display !== "none";
+    menu.style.display = open ? "none" : "block";
+    btn.setAttribute("aria-expanded", String(!open));
+  };
+  document.addEventListener("click", () => { menu.style.display = "none"; btn.setAttribute("aria-expanded","false"); });
+  menu.addEventListener("click", (e) => e.stopPropagation());
+})();
 
 // ── Phase 5: chord visual banner ─────────────────────────────────────────────
 

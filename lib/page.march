@@ -40,7 +40,7 @@ mod Page do
       "<meta charset=\"UTF-8\">\n" ++
       "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">\n" ++
       "<title>March Notebook — " ++ safe_path ++ "</title>\n" ++
-      "<link rel=\"stylesheet\" href=\"/assets/css/scroll.css\">\n" ++
+      "<link rel=\"stylesheet\" href=\"/assets/css/scroll.css?v=" ++ String.from_int(System.pid()) ++ "\">\n" ++
       "<script src=\"/assets/js/purify.min.js\"></script>\n" ++
       "<script type=\"importmap\">{\"imports\":{\"@codemirror/state\":\"https://esm.sh/@codemirror/state@6\",\"@codemirror/view\":\"https://esm.sh/@codemirror/view@6\",\"@codemirror/language\":\"https://esm.sh/@codemirror/language@6\",\"@codemirror/commands\":\"https://esm.sh/@codemirror/commands@6\",\"@lezer/highlight\":\"https://esm.sh/@lezer/highlight@1\"}}</script>\n" ++
       "<script type=\"module\" src=\"/assets/js/editor.js\"></script>\n" ++
@@ -55,12 +55,17 @@ mod Page do
       "<button class=\"btn btn-secondary\" id=\"btn-add-code\" title=\"Add Code cell\" aria-label=\"Add Code cell\"><span class=\"btn-ic\">+ code</span><span class=\"btn-lb\">+ Code</span></button>\n" ++
       "<button class=\"btn btn-secondary\" id=\"btn-add-section\" title=\"Add Section divider\" aria-label=\"Add Section divider\"><span class=\"btn-ic\">+ §</span><span class=\"btn-lb\">+ Section</span></button>\n" ++
       "<button class=\"btn btn-primary\" id=\"btn-run-all\" title=\"Run all cells\" aria-label=\"Run all cells\"><span class=\"btn-ic\">▶▶</span><span class=\"btn-lb\">▶ Run All</span></button>\n" ++
-      "<button class=\"btn btn-secondary\" id=\"btn-clear-all\" title=\"Clear all outputs\" aria-label=\"Clear all outputs\"><span class=\"btn-ic\">⌫</span><span class=\"btn-lb\">Clear All</span></button>\n" ++
+      "<button class=\"btn btn-ghost\" id=\"btn-clear-all\" title=\"Clear all outputs\" aria-label=\"Clear all outputs\"><span class=\"btn-ic\">⌫</span><span class=\"btn-lb\">Clear All</span></button>\n" ++
       "<button class=\"btn btn-secondary\" id=\"btn-save\" title=\"Save notebook\" aria-label=\"Save notebook\"><span class=\"btn-ic\">⇣</span><span class=\"btn-lb\">Save</span></button>\n" ++
-      "<button class=\"btn btn-secondary\" id=\"btn-export\" title=\"Export notebook to HTML\" aria-label=\"Export notebook to HTML\"><span class=\"btn-ic\">↗</span><span class=\"btn-lb\">Export HTML</span></button>\n" ++
-      "<button class=\"btn btn-secondary\" id=\"btn-inspector\" title=\"Toggle variable inspector\" aria-label=\"Toggle variable inspector\"><span class=\"btn-ic\">𝑥</span><span class=\"btn-lb\">𝑥 Inspector</span></button>\n" ++
-      "<button class=\"btn btn-secondary\" id=\"btn-env\" title=\"Environment variables\" aria-label=\"Environment variables\"><span class=\"btn-ic\">$</span><span class=\"btn-lb\">$ Env</span></button>\n" ++
-      "<button class=\"btn btn-secondary\" id=\"btn-log\" title=\"Debug log\" aria-label=\"Debug log\"><span class=\"btn-ic\">⋯</span><span class=\"btn-lb\">Log</span></button>\n" ++
+      "<button class=\"btn btn-ghost\" id=\"btn-inspector\" title=\"Toggle variable inspector\" aria-label=\"Toggle variable inspector\"><span class=\"btn-ic\">𝑥</span><span class=\"btn-lb\">Inspector</span></button>\n" ++
+      "<button class=\"btn btn-ghost\" id=\"btn-env\" title=\"Environment variables\" aria-label=\"Environment variables\"><span class=\"btn-ic\">$</span><span class=\"btn-lb\">Env</span></button>\n" ++
+      "<div id=\"overflow-wrap\">\n" ++
+      "<button class=\"btn btn-ghost\" id=\"btn-overflow\" title=\"More actions\" aria-label=\"More actions\" aria-expanded=\"false\" aria-haspopup=\"true\">···</button>\n" ++
+      "<div id=\"overflow-menu\" role=\"menu\" aria-label=\"More actions\">\n" ++
+      "<button id=\"btn-export\" role=\"menuitem\" title=\"Export notebook to HTML\" aria-label=\"Export notebook to HTML\">↗ Export HTML</button>\n" ++
+      "<button id=\"btn-log\" role=\"menuitem\" title=\"Debug log\" aria-label=\"Debug log\">⋯ Log</button>\n" ++
+      "</div>\n" ++
+      "</div>\n" ++
       "<button id=\"theme-toggle\" title=\"Toggle light/dark theme\" aria-label=\"Toggle light/dark theme\">☽</button>\n" ++
       "<span id=\"mode-badge\" title=\"Command mode — press ? for shortcuts, Enter to edit, Esc to exit\">COMMAND</span>\n" ++
       "<div id=\"status\">connecting</div>\n" ++

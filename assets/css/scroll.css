@@ -9,7 +9,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif;
 .btn-primary{background:var(--acc);color:var(--bg)}
 .btn-primary:hover{background:var(--acc2);color:#fff}
 .btn-secondary{background:transparent;color:var(--dim);border:1px solid var(--bdr)}
+.btn-ghost{background:transparent;color:var(--dim);border:none}
 .btn-secondary:hover{background:var(--card);color:var(--text)}
+.btn-ghost:hover{background:var(--card);color:var(--text)}
 .btn:disabled{opacity:.35;cursor:default}
 #status{font-size:11px;color:var(--dim);padding:3px 10px;border:1px solid var(--bdr);border-radius:4px;min-width:80px;text-align:center;font-family:'JetBrains Mono','Fira Code','SF Mono',monospace}
 #status.ok{color:var(--fn);border-color:color-mix(in srgb,var(--fn) 30%,transparent)}
@@ -231,3 +233,17 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI','Inter',sans-serif;
 .blob-image img,.blob-video video{border:1px solid color-mix(in srgb,var(--ty) 10%,transparent)}
 .blob-pdf embed{border:1px solid color-mix(in srgb,var(--ty) 10%,transparent)}
 .blob-unknown a,.blob-pdf a{font-size:12px;color:var(--acc)}
+/* ── Overflow menu ───────────────────────────────── */
+#overflow-wrap{position:relative;display:flex}
+#overflow-menu{display:none;position:absolute;right:0;top:calc(100% + 6px);background:var(--sb);border:1px solid var(--bdr);border-radius:7px;padding:4px;z-index:200;min-width:140px;box-shadow:0 8px 24px rgba(0,0,0,.35)}
+#overflow-menu button{display:block;width:100%;text-align:left;padding:6px 12px;border-radius:5px;border:none;background:transparent;color:var(--text);font-size:12px;cursor:pointer;white-space:nowrap;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
+#overflow-menu button:hover{background:var(--card);color:var(--bright)}
+/* ── Markdown fenced code blocks ────────────────── */
+.cell-md-fence{position:relative;margin:7px 0;border-radius:6px;overflow:hidden;background:var(--code);border-left:2px solid var(--acc)}
+.cell-md-fence pre{margin:0;padding:10px 14px;font-family:'JetBrains Mono','Fira Code','SF Mono',monospace;font-size:12px;line-height:1.65;color:var(--code-text);white-space:pre;overflow-x:auto}
+.cell-md-fence code{font-family:inherit;font-size:inherit;background:none;padding:0;color:inherit;border-radius:0}
+.cell-md-fence-lang{position:absolute;top:5px;right:8px;font-size:9px;color:var(--fn);font-family:'JetBrains Mono',monospace;font-weight:600;letter-spacing:.06em;text-transform:uppercase;pointer-events:none}
+/* ── Markdown blockquotes + ordered lists ────────── */
+.cell-md blockquote{border-left:3px solid var(--acc2);padding:4px 10px;margin:6px 0;background:color-mix(in srgb,var(--acc2) 5%,transparent);border-radius:0 4px 4px 0}
+.cell-md blockquote p{color:var(--dim);margin:2px 0;font-size:13px}
+.cell-md ol{margin:7px 0 7px 24px;color:var(--text)}
