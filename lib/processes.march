@@ -16,12 +16,6 @@
 
 mod Processes do
 
-import Cells
-
--- Session ID: combines the notebook path and the per-WebSocket connection ID.
--- Kept here for API compatibility with scroll.march's delegation wrapper.
-pfn session_id(nb_path, conn_id) do nb_path ++ ":" ++ conn_id end
-
 -- These stubs are exposed via scroll.march's delegation layer (Scroll.*)
 -- for use by the test suite.  Session.march calls Runtime directly.
 

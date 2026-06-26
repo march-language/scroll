@@ -179,32 +179,36 @@ mod Session do
         DebugLog.append("ws", "save_as")
         let path_opt = json_get_str(jv, "path")
         let content_opt = json_get_str(jv, "content")
-        match (path_opt, content_opt) do
-        (None, _) -> do WebSocket.send_frame(socket, err_frame("missing path")) nb_path end
-        (_, None) -> do WebSocket.send_frame(socket, err_frame("missing content")) nb_path end
-        (_, Some("")) -> do WebSocket.send_frame(socket, err_frame("missing content")) nb_path end
-        (Some(new_path), Some(content)) -> do
-          if String.byte_size(content) > 50000000 do
-            WebSocket.send_frame(socket, err_frame("notebook too large (> 50 MB)"))
-            nb_path
-          else
-          let abs_path = if String.starts_with(new_path, "/") do new_path
-            else System.cwd() ++ "/" ++ new_path
-            end
-          let dir = Path.dirname(abs_path)
-          if not(File.exists(dir)) do
-            WebSocket.send_frame(socket, err_frame("directory does not exist: " ++ dir))
-            nb_path
-          else
-            match File.write(abs_path, content) do
-            Err(e) -> do WebSocket.send_frame(socket, err_frame(to_string(e))) nb_path end
-            Ok(_) -> do
-              let title = Path.basename(abs_path)
-              WebSocket.send_frame(socket, TextFrame(
-                "{\"type\":\"saved_as\",\"path\":" ++ json_str(abs_path) ++
-                ",\"title\":" ++ json_str(title) ++ "}"
-              ))
-              abs_path
+        match path_opt do
+        None -> do WebSocket.send_frame(socket, err_frame("missing path")) nb_path end
+        Some(new_path) -> do
+          match content_opt do
+          None -> do WebSocket.send_frame(socket, err_frame("missing content")) nb_path end
+          Some("") -> do WebSocket.send_frame(socket, err_frame("missing content")) nb_path end
+          Some(content) -> do
+            if String.byte_size(content) > 50000000 do
+              WebSocket.send_frame(socket, err_frame("notebook too large (> 50 MB)"))
+              nb_path
+            else
+            let abs_path = if String.starts_with(new_path, "/") do new_path
+              else System.cwd() ++ "/" ++ new_path
+              end
+            let dir = Path.dirname(abs_path)
+            if not(File.exists(dir)) do
+              WebSocket.send_frame(socket, err_frame("directory does not exist: " ++ dir))
+              nb_path
+            else
+              match File.write(abs_path, content) do
+              Err(e) -> do WebSocket.send_frame(socket, err_frame(to_string(e))) nb_path end
+              Ok(_) -> do
+                let title = Path.basename(abs_path)
+                WebSocket.send_frame(socket, TextFrame(
+                  "{\"type\":\"saved_as\",\"path\":" ++ json_str(abs_path) ++
+                  ",\"title\":" ++ json_str(title) ++ "}"
+                ))
+                abs_path
+              end
+              end
             end
             end
           end
