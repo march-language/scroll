@@ -6,16 +6,20 @@ Notebooks are plain Markdown files (`.scrollmd`) with fenced March code blocks. 
 
 ## Installation
 
-Scroll is installed as a forge archive. From a local checkout:
+Scroll is a forge **tool**: installing it adds the `scroll.serve` command. It's
+listed on the forge registry at <https://forgepm.org/packages/scroll>.
+
+Install directly from the GitHub source:
 
 ```bash
-forge install scroll@/path/to/scroll
+forge install https://github.com/march-language/scroll
 ```
 
-Or from git:
+Or from a local checkout:
 
 ```bash
-forge install scroll@https://github.com/march-lang/scroll
+git clone https://github.com/march-language/scroll
+forge install ./scroll
 ```
 
 ## Usage
@@ -73,10 +77,10 @@ Server cells run as background processes with Start/Stop controls in the UI.
 ```bash
 cd /path/to/scroll
 
-# Unit tests (117 tests)
+# Unit tests (149 tests)
 MARCH_LIB_PATH=lib march test test/test_scroll.march
 
-# End-to-end tests via WebSocket (32 tests)
+# End-to-end tests over the notebook WebSocket protocol
 python3 test/test_scroll.py
 ```
 
