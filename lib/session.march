@@ -1,4 +1,4 @@
-mod Session do
+mod WsSession do
 
   -- session.march — WebSocket message handler and receive loop.
   --
@@ -121,7 +121,7 @@ mod Session do
       ws_loop(socket, nb_path, march_bin, conn_id)
     end
     Pong -> ws_loop(socket, nb_path, march_bin, conn_id)
-    Close(code, reason) -> do
+    WebSocket.Close(code, reason) -> do
       -- Clean up the REPL for this connection when the browser tab closes.
       let _ = Runtime.stop_runtime(rt_session_id(nb_path, conn_id))
       WebSocket.close(socket, code, reason)

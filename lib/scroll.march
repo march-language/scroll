@@ -125,7 +125,7 @@ pfn ws_handler(nb_path, march_bin, port, conn) do
   else
     WebSocket.upgrade(conn, fn socket ->
       let conn_id = next_conn_id()
-      Session.ws_loop(socket, nb_path, march_bin, conn_id)
+      WsSession.ws_loop(socket, nb_path, march_bin, conn_id)
     )
   end
 end
@@ -186,7 +186,7 @@ pfn create_notebook(path) do
   let content = "# " ++ name ++ "\n\n```march\nprintln(\"Hello, March!\")\n```\n"
   match File.write(path, content) do
     Ok(_)  -> IO.puts("created: " ++ path)
-    Err(e) -> IO.warn("could not create " ++ path ++ ": " ++ e)
+    Err(e) -> IO.warn("could not create " ++ path ++ ": " ++ to_string(e))
   end
 end
 
