@@ -27,7 +27,7 @@ end
 -- Run march on a source string; return (exit_code, stdout, stderr).
 fn run_march(march_src) do
   match write_tmp(march_src, ".march") do
-    Err(e) -> (-1, "", "write_tmp failed: " ++ e)
+    Err(e) -> (-1, "", "write_tmp failed: " ++ to_string(e))
     Ok(tmp) ->
       match System.cmd("march", [tmp]) do
         Ok(r) -> (System.exit_code(r), System.stdout(r), System.stderr(r))
@@ -960,27 +960,21 @@ end
 
 describe "start_run_proc + check_run_proc" do
 
-  test "runs a simple cell end-to-end and reports output" do
+  -- REPL lifecycle management moved to session.march (WsSession), which calls
+  -- Runtime.* directly over the live WebSocket connection.  Scroll.start_run_proc
+  -- now delegates to the Processes stub, which always returns Err — see
+  -- lib/processes.march for why (cross-module Runtime calls from this module
+  -- crash the interpreter). True end-to-end cell execution is exercised via
+  -- WsSession, not this stub.
+  test "stub always returns an error (real execution moved to session.march)" do
     let nb = "/tmp/test_scroll_run1.scrollmd"
     let conn = "test_conn_1"
     let cells = Scroll.parse_cells("```march\n40 + 2\n```")
     match Scroll.start_run_proc(cells, 0, "march", "", nb, conn) do
-      Err(msg) -> do
-        IO.puts("start_run_proc failed: " ++ msg)
-        assert false
-      end
+      Err(_) -> assert true
       Ok(_sid) -> do
-        match wait_for_run(0, nb, conn, 60) do
-          None -> do
-            Scroll.stop_run_proc(nb, conn)
-            assert false
-          end
-          Some((stdout, _blobs, err_opt, _vars)) -> do
-            Scroll.stop_run_proc(nb, conn)
-            assert (err_opt == None)
-            assert (String.contains(stdout, "42"))
-          end
-        end
+        Scroll.stop_run_proc(nb, conn)
+        assert false
       end
     end
   end

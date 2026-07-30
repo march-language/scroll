@@ -12,7 +12,7 @@
 --   start_run_proc/6 : stub — returns error (logic moved to session.march)
 --   check_run_proc/3 : stub — returns None
 --   live_run_proc/2  : stub — returns None
---   stop_run_proc/2  : stub — no-op (logic moved to session.march)
+--   stop_run_proc/2  : stub — no-op, returns None (logic moved to session.march)
 
 mod Processes do
 
@@ -47,17 +47,20 @@ fn live_run_proc(nb_path, conn_id) do
 end
 
 -- No longer used by session.march; stub is a no-op.
+-- Returns None rather than () — cross-module calls into this module that
+-- return Unit crash the March interpreter/JIT (see
+-- memory/feedback_march_crossmodule_bug.md); Option is unaffected.
 fn stop_run_proc(nb_path, conn_id) do
   let _ = nb_path
   let _ = conn_id
-  ()
+  None
 end
 
 -- No longer used by session.march; stub is a no-op.
 fn preload_reset_proc(nb_path, conn_id) do
   let _ = nb_path
   let _ = conn_id
-  ()
+  None
 end
 
 -- No longer used by session.march; stub is a no-op.
@@ -65,7 +68,7 @@ fn warm_start_proc(nb_path, conn_id, march_bin) do
   let _ = nb_path
   let _ = conn_id
   let _ = march_bin
-  ()
+  None
 end
 
 end
