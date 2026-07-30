@@ -7,7 +7,29 @@ and Scroll adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
-## [0.1.2] - 2026-07-30
+## [0.1.3] - 2026-07-30
+
+### Fixed
+
+- **`forge scroll.serve` works again.** 0.1.2 declared bastion as a
+  `registry = "forge"` dependency, which resolves for `forge check`, `build`
+  and `test` — but **not for archive tasks**. Running `forge scroll.serve`,
+  the one command this tool exists to provide, failed with `Unknown module
+  Router` / `Middleware` / `Static`. 0.1.2 was verified with check/build/test
+  only, so the break went unnoticed; the release should be treated as broken.
+
+  bastion is still pinned to exactly 0.2.4, now by **commit** over git
+  (`36e85e04…`, the `chore(release): bastion 0.2.4` commit) rather than by
+  registry version. A git dependency resolves on both paths and pinning the
+  rev gives the same reproducibility the registry version was chosen for.
+
+- **`depot` is no longer declared.** It was re-added in 0.1.2 only because a
+  registry dependency does not pull its own transitive dependencies. A git
+  dependency does, so bastion brings depot along again on its own.
+
+## [0.1.2] - 2026-07-30 [BROKEN]
+
+> Superseded by 0.1.3 — `forge scroll.serve` fails on this version. Do not use.
 
 ### Changed
 
@@ -90,7 +112,8 @@ and Scroll adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 Initial release.
 
-[Unreleased]: https://github.com/march-language/scroll/compare/v0.1.2...HEAD
+[Unreleased]: https://github.com/march-language/scroll/compare/v0.1.3...HEAD
+[0.1.3]: https://github.com/march-language/scroll/compare/v0.1.2...v0.1.3
 [0.1.2]: https://github.com/march-language/scroll/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/march-language/scroll/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/march-language/scroll/releases/tag/v0.1.0

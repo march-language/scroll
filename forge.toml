@@ -1,19 +1,20 @@
 [package]
 name = "scroll"
-version = "0.1.2"
+version = "0.1.3"
 type = "tool"
 description = "Interactive notebook for March — Livebook-style in the browser"
 author = ""
 
 [deps]
-bastion = { registry = "forge", version = "0.2.4" }
-# depot is bastion's dependency, not ours — scroll never imports it. It has to
-# be declared anyway because forge does not resolve the transitive deps of a
-# REGISTRY dependency: `forge deps` fetches bastion's tarball and stops, so
-# bastion's own `Depot.Middleware` fails with `Module Pool not found`. (A git
-# dependency does recurse — that is how this worked before 0.1.2.) Drop this
-# line once forge resolves registry deps transitively.
-depot = { git = "https://github.com/march-language/depot.git", branch = "main" }
+# bastion 0.2.4, pinned by commit rather than by registry version on purpose.
+# A `registry = "forge"` dependency resolves for `forge check`/`build`/`test`
+# but NOT for archive tasks: `forge scroll.serve` — the command this tool
+# exists to provide — fails with `Unknown module Router` / `Middleware` /
+# `Static`. A git dependency resolves on both paths, and pinning the rev gives
+# the same reproducibility the registry version would have. This rev IS
+# bastion 0.2.4 (its forge.toml says so). Revisit if forge resolves registry
+# deps for archive tasks.
+bastion = { git = "https://github.com/march-language/bastion.git", rev = "36e85e04ba94b189a5fdbb049cf2c7eaeb19b020" }
 
 [archive]
 
