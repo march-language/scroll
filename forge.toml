@@ -1,12 +1,12 @@
 [package]
 name = "scroll"
-version = "0.1.0"
+version = "0.1.1"
 type = "tool"
 description = "Interactive notebook for March — Livebook-style in the browser"
 author = ""
 
 [deps]
-bastion = { path = "/Users/80197052/code/bastion" }
+bastion = { git = "https://github.com/march-language/bastion.git", branch = "main" }
 
 [archive]
 

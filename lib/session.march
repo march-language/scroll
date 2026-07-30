@@ -12,9 +12,15 @@ mod WsSession do
   -- ws_loop and all Runtime calls so each browser tab owns an isolated REPL.
   -- When the connection closes, the REPL for that conn_id is stopped.
   --
-  -- NOTE: Runtime.* calls must be made from session.march directly.  Calling
-  -- them from processes.march crashes the March interpreter with the new JIT
-  -- binary (cross-module dispatch bug; see memory/feedback_march_crossmodule_bug.md).
+  -- HISTORICAL NOTE: this module calls Runtime.* directly rather than going
+  -- through processes.march, which was long believed to be forced by a
+  -- "cross-module dispatch" compiler bug.  That diagnosis was wrong: the
+  -- crashes were two unrelated March bugs, both since fixed upstream — an
+  -- ESeq codegen bug that discarded a tail call's result (march#120) and a
+  -- parser bug that glued a line holding only `()` onto the previous line,
+  -- turning `let _ = x` + `()` into a call of `x` (march#129).  Nothing now
+  -- prevents calling Runtime.* from processes.march; the direct calls are
+  -- kept simply because they work and are the shorter path.
   --
   -- Public API (fn):
   --   ws_loop/4 : receive and handle WebSocket frames until the connection closes
@@ -27,10 +33,13 @@ mod WsSession do
   -- so each browser tab gets its own isolated REPL process.
   pfn rt_session_id(nb_path, conn_id) do nb_path ++ ":" ++ conn_id end
 
-  -- ── Inline blob parser (avoids cross-module complex-return JIT bug) ──────────
-  -- The new JIT binary (Apr 22 18:38) hangs on cross-module calls that return
-  -- tuples or lists.  BlobParser.parse returns (String, List) — triggers the bug.
-  -- Inlining the logic here (within-module) avoids the cross-module dispatch.
+  -- ── Inline blob parser ──────────────────────────────────────────────────────
+  -- Duplicates lib/scroll/blob_parser.march's logic in-module.  This was added
+  -- to dodge a supposed "cross-module calls returning tuples/lists" JIT bug;
+  -- that was really the ESeq codegen bug fixed upstream in march#120, so the
+  -- duplication is no longer required — BlobParser.parse works fine now.  Left
+  -- in place deliberately: collapsing it is a behaviour-affecting refactor of
+  -- the hot output path, not a release-time change.
   pfn blob_sentinel_start() do "__SCROLL_BLOB__:" end
   pfn blob_sentinel_end()   do "__SCROLL_BLOB_END__\n" end
 

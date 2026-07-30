@@ -4,6 +4,23 @@ Interactive notebook for March — Livebook-style in the browser.
 
 Notebooks are plain Markdown files (`.scrollmd`) with fenced March code blocks. Open them in the browser, run cells interactively, and save changes back to disk.
 
+## Requirements
+
+A March toolchain new enough to contain these two compiler fixes — without
+them scroll builds but misbehaves at runtime:
+
+- **`forge test` transitive dependency resolution** ([march#127]) — scroll
+  reaches `bastion`'s own dependency (`depot`) through `bastion`. Older forge
+  resolved that for `check`/`build` but not `test`, so tests failed with
+  `Unknown module Pool`.
+- **The `(`-led-statement parser fix** ([march#129]) — a line holding only
+  `()` used to be glued onto the previous line as a call.
+
+`forge toolchain list` shows what you have installed.
+
+[march#127]: https://github.com/march-language/march/pull/127
+[march#129]: https://github.com/march-language/march/pull/129
+
 ## Installation
 
 Scroll is a forge **tool**: installing it adds the `scroll.serve` command. It's
@@ -20,6 +37,18 @@ Or from a local checkout:
 ```bash
 git clone https://github.com/march-language/scroll
 forge install ./scroll
+```
+
+### Building from a checkout
+
+Dependencies are fetched explicitly — `forge check` does **not** fetch them, so
+a fresh clone must resolve first or every `bastion` module reads as unknown:
+
+```bash
+git clone https://github.com/march-language/scroll
+cd scroll
+forge deps      # clones bastion (and its own dep, depot) into ~/.march/cas
+forge test
 ```
 
 ## Usage
