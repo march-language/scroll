@@ -7,6 +7,26 @@ and Scroll adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 ## [Unreleased]
 
+## [0.1.2] - 2026-07-30
+
+### Changed
+
+- **`bastion` now comes from the forge registry, pinned to 0.2.4**, instead of
+  tracking its `main` branch over git. 0.1.1 shipped
+  `bastion = { git = …, branch = "main" }`, which meant every install picked up
+  whatever bastion's `main` happened to be that day. The dependency is now the
+  published [bastion 0.2.4](https://forgepm.org/packages/bastion?tab=versions) —
+  the exact version this release was tested against.
+
+- **`depot` is declared again** — reluctantly, and for a different reason than
+  the one 0.1.1 removed. Scroll does not use depot; it is bastion's dependency.
+  Forge does not resolve the transitive dependencies of a **registry**
+  dependency: `forge deps` fetches bastion's tarball and stops, so bastion's own
+  `Depot.Middleware` fails to compile with `Module Pool not found`. A **git**
+  dependency does recurse, which is why 0.1.1 could drop the line. Verified by
+  purging both from the CAS and re-resolving each way. The declaration can go
+  once forge resolves registry deps transitively.
+
 ## [0.1.1] - 2026-07-30
 
 ### Fixed
@@ -70,6 +90,7 @@ and Scroll adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html)
 
 Initial release.
 
-[Unreleased]: https://github.com/march-language/scroll/compare/v0.1.1...HEAD
+[Unreleased]: https://github.com/march-language/scroll/compare/v0.1.2...HEAD
+[0.1.2]: https://github.com/march-language/scroll/compare/v0.1.1...v0.1.2
 [0.1.1]: https://github.com/march-language/scroll/compare/v0.1.0...v0.1.1
 [0.1.0]: https://github.com/march-language/scroll/releases/tag/v0.1.0

@@ -1,12 +1,19 @@
 [package]
 name = "scroll"
-version = "0.1.1"
+version = "0.1.2"
 type = "tool"
 description = "Interactive notebook for March — Livebook-style in the browser"
 author = ""
 
 [deps]
-bastion = { git = "https://github.com/march-language/bastion.git", branch = "main" }
+bastion = { registry = "forge", version = "0.2.4" }
+# depot is bastion's dependency, not ours — scroll never imports it. It has to
+# be declared anyway because forge does not resolve the transitive deps of a
+# REGISTRY dependency: `forge deps` fetches bastion's tarball and stops, so
+# bastion's own `Depot.Middleware` fails with `Module Pool not found`. (A git
+# dependency does recurse — that is how this worked before 0.1.2.) Drop this
+# line once forge resolves registry deps transitively.
+depot = { git = "https://github.com/march-language/depot.git", branch = "main" }
 
 [archive]
 
