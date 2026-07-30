@@ -66,22 +66,27 @@ end
 
 -- ── Asset root ────────────────────────────────────────────────────────────────
 -- Assets live under <archive_root>/assets/.  At runtime we discover the
--- archive root from MARCH_LIB_PATH (set by forge to "<root>/lib"); if that's
--- unavailable (running via bare `march lib/scroll.march`) we fall back to
--- argv[1]'s parent-of-parent directory.  Final fallback is System.cwd().
+-- archive root from argv[1]'s parent-of-parent directory — forge invokes
+-- `march <root>/lib/scroll.march` as a subprocess, so argv[1] reliably
+-- points at this module regardless of how many dependencies the project
+-- has. If that's unavailable (e.g. running via the interactive REPL) we
+-- fall back to MARCH_LIB_PATH's first entry; forge lists a project's own
+-- lib dir there too, but ordered after its dependencies' lib dirs, so this
+-- fallback only picks the right root for a project with no dependencies —
+-- it's a last resort, not the primary path. Final fallback is System.cwd().
 
 fn asset_root() do
-  match System.env("MARCH_LIB_PATH") do
-    Some(s) ->
-      let first = match String.split_first(s, ":") do
-        Some((head, _)) -> head
-        None -> s
-      end
-      Path.dirname(first)
-    None ->
-      match System.argv() do
-        Cons(_, Cons(mod_path, _)) -> Path.dirname(Path.dirname(mod_path))
-        _ -> System.cwd()
+  match System.argv() do
+    Cons(_, Cons(mod_path, _)) -> Path.dirname(Path.dirname(mod_path))
+    _ ->
+      match System.env("MARCH_LIB_PATH") do
+        Some(s) ->
+          let first = match String.split_first(s, ":") do
+            Some((head, _)) -> head
+            None -> s
+          end
+          Path.dirname(first)
+        None -> System.cwd()
       end
   end
 end
