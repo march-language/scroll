@@ -7,7 +7,6 @@ author = ""
 
 [deps]
 bastion = { path = "/Users/80197052/code/bastion" }
-depot = { git = "https://github.com/march-language/depot.git", branch = "main" }
 
 [archive]
 
