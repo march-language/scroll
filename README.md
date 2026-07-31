@@ -6,9 +6,17 @@ Notebooks are plain Markdown files (`.scrollmd`) with fenced March code blocks. 
 
 ## Requirements
 
-A March toolchain new enough to contain these two compiler fixes — without
-them scroll builds but misbehaves at runtime:
+A March toolchain new enough to contain these fixes — without them scroll
+builds but misbehaves, in ways that do not always look like a toolchain
+problem:
 
+- **Registry deps for archive tasks** ([march#133]) — required as of scroll
+  0.1.4, which declares `bastion` as a registry dependency. Older forge gave an
+  archive task no search path for a registry dep, so `forge check`/`build`/
+  `test` passed and then `forge scroll.serve` failed with `Unknown module
+  Router` / `Middleware` / `Static`. The same fix also makes `forge deps` fetch
+  a registry package's own dependencies (`bastion` → `depot`), without which
+  the build fails with `Module Pool not found`.
 - **`forge test` transitive dependency resolution** ([march#127]) — scroll
   reaches `bastion`'s own dependency (`depot`) through `bastion`. Older forge
   resolved that for `check`/`build` but not `test`, so tests failed with
@@ -20,6 +28,7 @@ them scroll builds but misbehaves at runtime:
 
 [march#127]: https://github.com/march-language/march/pull/127
 [march#129]: https://github.com/march-language/march/pull/129
+[march#133]: https://github.com/march-language/march/pull/133
 
 ## Installation
 

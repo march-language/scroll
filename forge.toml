@@ -1,20 +1,12 @@
 [package]
 name = "scroll"
-version = "0.1.3"
+version = "0.1.4"
 type = "tool"
 description = "Interactive notebook for March — Livebook-style in the browser"
 author = ""
 
 [deps]
-# bastion 0.2.4, pinned by commit rather than by registry version on purpose.
-# A `registry = "forge"` dependency resolves for `forge check`/`build`/`test`
-# but NOT for archive tasks: `forge scroll.serve` — the command this tool
-# exists to provide — fails with `Unknown module Router` / `Middleware` /
-# `Static`. A git dependency resolves on both paths, and pinning the rev gives
-# the same reproducibility the registry version would have. This rev IS
-# bastion 0.2.4 (its forge.toml says so). Revisit if forge resolves registry
-# deps for archive tasks.
-bastion = { git = "https://github.com/march-language/bastion.git", rev = "36e85e04ba94b189a5fdbb049cf2c7eaeb19b020" }
+bastion = { registry = "forge", version = "0.2.4" }
 
 [archive]
 
