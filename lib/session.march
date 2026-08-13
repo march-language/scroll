@@ -1,5 +1,11 @@
 mod WsSession do
 
+  needs IO.FileRead
+  needs IO.FileWrite
+  needs IO.Mut
+  needs IO.Process
+  needs IO.WebSocket
+
   -- session.march — WebSocket message handler and receive loop.
   --
   -- Dispatches JSON messages from the browser to the appropriate sub-system:

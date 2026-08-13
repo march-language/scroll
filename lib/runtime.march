@@ -33,6 +33,11 @@
 
 mod Runtime do
 
+  needs IO.FileRead
+  needs IO.FileWrite
+  needs IO.Mut
+  needs IO.Process
+
 import Shell
 -- BlobParser (lib/scroll/blob_parser.march) is part of this project and
 -- resolved automatically by forge — no explicit import needed for sub-path modules.

@@ -14,6 +14,14 @@
 
 mod Scroll do
 
+  needs IO.Console
+  needs IO.FileRead
+  needs IO.FileWrite
+  needs IO.Mut
+  needs IO.NetListen
+  needs IO.Process
+  needs IO.WebSocket
+
 -- ── Public API delegation wrappers ────────────────────────────────────────────
 -- Tests (test_scroll.march) call these as Scroll.fn_name.
 -- import does not re-export, so we delegate explicitly.
@@ -197,7 +205,7 @@ end
 
 -- ── Main entry point ──────────────────────────────────────────────────────────
 
-fn main() do
+fn main(_cap_console : Cap(IO.Console), _cap_fileread : Cap(IO.FileRead), _cap_filewrite : Cap(IO.FileWrite), _cap_mut : Cap(IO.Mut), _cap_netlisten : Cap(IO.NetListen), _cap_process : Cap(IO.Process), _cap_websocket : Cap(IO.WebSocket)) do
   let from_env = System.env("FORGE_NB_INPUT")
 
   let (nb_path, port, march_bin, display_title, is_temp) = match from_env do

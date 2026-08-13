@@ -1,5 +1,7 @@
 mod Page do
 
+  needs IO.Process
+
   -- page.march — Server-side HTML shell for the notebook browser UI.
   --
   -- Emits a minimal HTML skeleton that pulls in stylesheet and scripts as

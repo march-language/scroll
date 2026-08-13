@@ -1,5 +1,10 @@
 mod DebugLog do
 
+  needs IO.FileRead
+  needs IO.FileWrite
+  needs IO.Mut
+  needs IO.Process
+
   -- debug_log.march — Lightweight append-only log for debugging scroll sessions.
   --
   -- Previously used Process.run("date") and Process.run("sh -c echo >> file") for
