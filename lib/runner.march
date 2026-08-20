@@ -10,6 +10,7 @@
 --   find_code_idx/4      : map overall cell index → code-cell index
 
 mod Runner do
+  needs IO.Process
 
 import Shell
 
@@ -392,8 +393,9 @@ fn generate_runner(cells, run_through_idx) do
   -- valid March (mod_decl is part of decl_list_r used recursively).
   -- The session token is printed first so extract_cell_output / extract_vars
   -- can discover it and use the collision-resistant token-based markers.
-  "mod NotebookRunner do\n\n" ++ mod_str ++
-  "fn main() do\n" ++
+  "mod NotebookRunner do\n\n" ++
+  "  needs IO.Console\n\n" ++ mod_str ++
+  "fn main(_cap_console : Cap(IO.Console)) do\n" ++
   "  println(\"" ++ session_tok_line(tok) ++ "\")\n" ++
   body ++ "end\n\nend\n"
 end
