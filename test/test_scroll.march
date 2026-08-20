@@ -12,6 +12,8 @@
 --     march test test/test_scroll.march
 
 mod TestScroll do
+  needs IO.FileWrite
+  needs IO.Process
 
 -- ── Helpers ───────────────────────────────────────────────────────────────────
 
