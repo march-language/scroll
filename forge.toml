@@ -1,6 +1,6 @@
 [package]
 name = "scroll"
-version = "0.1.5"
+version = "0.1.6"
 type = "tool"
 description = "Interactive notebook for March — Livebook-style in the browser"
 author = ""
