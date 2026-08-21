@@ -6,7 +6,7 @@ description = "Interactive notebook for March — Livebook-style in the browser"
 author = ""
 
 [deps]
-bastion = { registry = "forge", version = "0.2.4" }
+bastion = { registry = "forge", version = "0.3.1" }
 
 [archive]
 
